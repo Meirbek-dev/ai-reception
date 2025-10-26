@@ -155,7 +155,22 @@ const normalizeCategoryKey = (raw?: string | null): string => {
 
 // Main App Component
 export default function AIReceptionApp() {
-  const [isDark, setIsDark] = useState(false);
+  const THEME_KEY = "ai_reception_theme";
+
+  // Initialize isDark synchronously from localStorage or system preference
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === "dark") return true;
+      if (saved === "light") return false;
+      if (typeof window !== "undefined" && window.matchMedia) {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return false;
+  });
   const [name, setName] = useState("");
   const [lastName, setLastName] = useState("");
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -167,11 +182,17 @@ export default function AIReceptionApp() {
   const [fileToDelete, setFileToDelete] = useState<UploadedFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Apply theme class and persist selection
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
+    try {
+      if (isDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+      localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
+    } catch (e) {
+      // ignore
     }
   }, [isDark]);
 

@@ -1,0 +1,44 @@
+[project]
+name = "ai-reception"
+version = "0.1.0"
+description = "AI Reception"
+readme = "README.md"
+requires-python = ">=3.13.7,<3.14.0"
+dependencies = [
+    "aiofiles>=25.1.0",
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.120.0",
+    "paddleocr>=3.3.0",
+    "paddlepaddle>=3.2.0",
+    "pdf2image>=1.17.0",
+    "pillow>=12.0.0",
+    "pydantic>=2.12.3",
+    "pydantic-settings>=2.11.0",
+    "rapidfuzz>=3.14.1",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.14.1"]
+
+[tool.ruff]
+target-version = "py314"
+lint.select = ["ALL"]
+lint.fixable = ["ALL"]
+lint.ignore = [
+    "RUF001",
+    "TRY301",
+    "TRY401",
+    "BLE001",
+    "G004",
+    "F401",
+    "COM812",  # missing trailing comma (stylistic, optional)
+    "DTZ005",  # datetime.now() used without tzinfo (not always relevant)
+    "T20",     # flake8-print (allow print statements for debugging/logging)
+    "TC002",   # type checking import block placement
+    "TC001",   # type checking import not at top of file
+    "TC003",   # type checking import formatting
+    "PLR2004", # magic value used in comparison (often acceptable)
+    "D",       # all docstring-related rules disabled
+    "D100",    # missing docstring in public module
+    "S101",    # Use of `assert` detected
+    "TD002",   # Missing author in TODO;
+]

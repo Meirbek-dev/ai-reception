@@ -1,5 +1,5 @@
 """
-Modern OCR-based document classification
+Modern OCR-based document classification with parallel processing
 """
 
 import asyncio
@@ -12,7 +12,7 @@ import uuid
 import zipfile
 from collections import defaultdict, deque
 from collections.abc import AsyncGenerator
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Annotated
 
 import aiofiles
-import numpy as np
+import pytesseract
 from fastapi import (
     BackgroundTasks,
     FastAPI,
@@ -35,7 +35,6 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from paddleocr import PaddleOCR
 from pdf2image import convert_from_bytes
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -53,7 +52,6 @@ class Settings(BaseSettings):
     max_file_size: int = Field(default=50 * 1024 * 1024, gt=0)
     max_request_size: int = Field(default=500 * 1024 * 1024, gt=0)
     max_workers: int = Field(default=min(4, os.cpu_count() or 1), gt=0)
-    ocr_workers: int = Field(default=min(2, os.cpu_count() or 1), gt=0)  # NEW
     upload_folder: Path = Field(default=Path("uploads"))
     web_build_folder: Path = Field(default=Path("build/web"))
     max_pages_ocr: int = Field(default=10, gt=0, le=50)
@@ -64,7 +62,7 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=30, gt=0)
     max_files_per_upload: int = Field(default=20, gt=0)
     max_text_extract_length: int = Field(default=5000, gt=0)
-    ocr_timeout_seconds: int = Field(default=120, gt=1)
+    tesseract_timeout: int = Field(default=30, gt=0)
 
     model_config = ConfigDict(env_prefix="APP_", case_sensitive=False)
 
@@ -85,163 +83,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# OCR WORKER FUNCTIONS (for ProcessPoolExecutor)
-# ============================================================================
-
-# Global OCR instance per worker process
-_ocr_instance = None
-
-
-def _init_ocr_worker() -> None:
-    """Initialize OCR in worker process"""
-    global _ocr_instance
-    try:
-        # Try the constructor compatible with older paddleocr versions first.
-        # Some paddleocr releases accept `use_gpu`, others don't. Attempt both.
-        try:
-            _ocr_instance = PaddleOCR(use_angle_cls=True, lang="ru", use_gpu=False)
-            logger.info("OCR initialized in worker process (use_gpu=False)")
-        except (TypeError, ValueError) as exc:
-            # Newer paddleocr versions may not accept `use_gpu`; fall back.
-            msg = str(exc)
-            if "use_gpu" in msg or "Unknown argument" in msg:
-                logger.debug(
-                    "PaddleOCR constructor rejected use_gpu, retrying without it: %s",
-                    msg,
-                )
-                _ocr_instance = PaddleOCR(use_angle_cls=True, lang="ru")
-                logger.info("OCR initialized in worker process (no use_gpu)")
-            else:
-                raise
-    except Exception:
-        logger.exception("Failed to initialize OCR in worker")
-        raise
-
-
-def _ocr_worker_extract(image_array: np.ndarray) -> list:
-    """OCR extraction in worker process"""
-    global _ocr_instance
-    if _ocr_instance is None:
-        _init_ocr_worker()
-    return _ocr_instance.ocr(image_array)
-
-
-def _extract_text_from_pdf_worker(
-    file_bytes: bytes, max_pages: int, max_length: int
-) -> str:
-    """Extract text from PDF in worker process"""
-    try:
-        images = convert_from_bytes(
-            file_bytes,
-            first_page=1,
-            last_page=max_pages,
-            dpi=200,
-        )
-
-        texts = []
-        total_length = 0
-
-        for image in images:
-            # Optimize image
-            if image.mode not in ("RGB", "L"):
-                image = image.convert("L")  # Grayscale for faster OCR
-
-            max_size = 2000
-            if max(image.size) > max_size:
-                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-
-            # Convert to numpy array
-            arr = np.array(image, dtype=np.uint8)
-
-            if arr.ndim == 2:
-                arr = np.stack((arr, arr, arr), axis=-1)
-            elif arr.ndim == 3 and arr.shape[2] == 4:
-                arr = arr[:, :, :3]
-
-            if not arr.flags["C_CONTIGUOUS"]:
-                arr = np.ascontiguousarray(arr)
-
-            # Run OCR
-            result = _ocr_worker_extract(arr)
-
-            # Extract text
-            for line in result:
-                for rec in line:
-                    try:
-                        candidate = (
-                            rec[1][0]
-                            if isinstance(rec[1], (list, tuple))
-                            else str(rec[1])
-                        )
-                    except Exception:
-                        candidate = ""
-                    if candidate:
-                        texts.append(candidate)
-                        total_length += len(candidate)
-                    if total_length >= max_length:
-                        break
-                if total_length >= max_length:
-                    break
-
-        return "\n".join(texts)[:max_length]
-    except Exception:
-        logger.exception("PDF text extraction failed in worker")
-        return ""
-
-
-def _extract_text_from_image_worker(file_bytes: bytes, max_length: int) -> str:
-    """Extract text from image in worker process"""
-    try:
-        img = Image.open(io.BytesIO(file_bytes))
-
-        # Optimize image
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("L")  # Grayscale
-
-        max_size = 2000
-        if max(img.size) > max_size:
-            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-
-        # Convert to numpy
-        arr = np.array(img, dtype=np.uint8)
-
-        if arr.ndim == 2:
-            arr = np.stack((arr, arr, arr), axis=-1)
-        elif arr.ndim == 3 and arr.shape[2] == 4:
-            arr = arr[:, :, :3]
-
-        if not arr.flags["C_CONTIGUOUS"]:
-            arr = np.ascontiguousarray(arr)
-
-        # Run OCR
-        result = _ocr_worker_extract(arr)
-
-        # Extract text
-        texts = []
-        total_len = 0
-        for line in result:
-            for rec in line:
-                try:
-                    candidate = (
-                        rec[1][0] if isinstance(rec[1], (list, tuple)) else str(rec[1])
-                    )
-                except Exception:
-                    candidate = ""
-                if candidate:
-                    texts.append(candidate)
-                    total_len += len(candidate)
-                if total_len >= max_length:
-                    break
-            if total_len >= max_length:
-                break
-
-        return "\n".join(texts)[:max_length]
-    except Exception:
-        logger.exception("Image text extraction failed in worker")
-        return ""
 
 
 # ============================================================================
@@ -315,11 +156,6 @@ CATEGORY_KEYWORDS = {
     DocumentCategory.MED_SPRAVKA: KEYWORDS.MED_SPRAVKA,
 }
 
-# Pre-process keywords for faster matching
-_PREPROCESSED_KEYWORDS = {
-    cat: tuple(kw.lower() for kw in kws) for cat, kws in CATEGORY_KEYWORDS.items()
-}
-
 ALLOWED_EXTENSIONS = frozenset({".pdf", ".jpg", ".jpeg", ".png"})
 ALLOWED_MIMETYPES = frozenset(
     {
@@ -344,6 +180,30 @@ class ProcessedFile(BaseModel):
     status: str
 
 
+def processed_file_to_client(p: ProcessedFile) -> dict:
+    """Convert internal ProcessedFile to a consistent client-facing JSON.
+
+    This returns camelCase keys expected by the frontend and includes a
+    stable `uid` which the frontend can use as a React key / selection id.
+    """
+    # Ensure uid is always a stable UUID-like string. Prefer backend id.
+    uid = p.id if p.id else str(uuid.uuid4())
+
+    return {
+        "id": p.id,
+        "originalName": p.original_name,
+        # `newName` is the stored filename (human-facing saved name)
+        "newName": p.filename or None,
+        "filename": p.filename or None,
+        "category": p.category,
+        # keep some metadata handy for clients that want it
+        "size": p.size,
+        "modified": p.modified,
+        "status": p.status,
+        "uid": uid,
+    }
+
+
 class FileDeleteResponse(BaseModel):
     """Response model for file deletion"""
 
@@ -362,7 +222,6 @@ class HealthCheck(BaseModel):
     status: str
     version: str
     workers: int
-    ocr_workers: int
     upload_folder_exists: bool
 
 
@@ -393,6 +252,7 @@ class RateLimiter:
             now = time.time()
             requests = self._requests[identifier]
 
+            # Remove old requests outside window
             while requests and requests[0] < now - self.window:
                 requests.popleft()
 
@@ -437,32 +297,120 @@ def sanitize_name(name: str, max_length: int = 50) -> str:
     if not name:
         return "anon"
 
+    # Keep only alphanumeric, underscore, hyphen
     safe = "".join(c if (c.isalnum() or c in ("_", "-")) else "_" for c in name)
 
+    # Collapse multiple underscores
     while "__" in safe:
         safe = safe.replace("__", "_")
 
+    # Strip and truncate
     safe = safe.strip("_")[:max_length]
 
     return safe or "anon"
 
 
+def optimize_image(img: Image.Image, max_size: int | None = None) -> Image.Image:
+    """Optimize image for OCR with size constraints"""
+    max_size = max_size or settings.image_max_size
+
+    # Convert to RGB if necessary
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    # Resize if too large
+    if max(img.size) > max_size:
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+    return img
+
+
+def extract_text_from_image(img: Image.Image) -> str:
+    """Extract text from a PIL Image using Tesseract"""
+    try:
+        optimized = optimize_image(img)
+        config = "--psm 3 --oem 1"
+        text = pytesseract.image_to_string(
+            optimized, lang="rus", config=config, timeout=settings.tesseract_timeout
+        )
+        return text[: settings.max_text_extract_length]
+    except pytesseract.TesseractError:
+        logger.exception("Tesseract OCR failed")
+        return ""
+    except Exception:
+        logger.exception("Image text extraction failed")
+        return ""
+
+
+def extract_text(file_bytes: bytes, ext: str) -> str:
+    """Extract text from file bytes (PDF or image)"""
+    try:
+        if ext == ".pdf":
+            return _extract_text_from_pdf(file_bytes)
+        return _extract_text_from_image_bytes(file_bytes)
+    except Exception:
+        logger.exception("Text extraction failed for extension %s", ext)
+        return ""
+
+
+def _extract_text_from_pdf(file_bytes: bytes) -> str:
+    """Extract text from PDF bytes"""
+    try:
+        images = convert_from_bytes(
+            file_bytes,
+            first_page=1,
+            last_page=settings.max_pages_ocr,
+            dpi=200,  # Better quality
+        )
+
+        texts = []
+        total_length = 0
+
+        for image in images:
+            text = extract_text_from_image(image)
+            texts.append(text)
+            total_length += len(text)
+
+            # Stop if we have enough text
+            if total_length >= settings.max_text_extract_length:
+                break
+
+        return "\n".join(texts)[: settings.max_text_extract_length]
+    except Exception:
+        logger.exception("PDF text extraction failed")
+        return ""
+
+
+def _extract_text_from_image_bytes(file_bytes: bytes) -> str:
+    """Extract text from image bytes"""
+    try:
+        img = Image.open(io.BytesIO(file_bytes))
+        return extract_text_from_image(img)
+    except UnidentifiedImageError:
+        logger.exception("Unidentified image format")
+        return ""
+    except Exception:
+        logger.exception("Image opening failed")
+        return ""
+
+
 @lru_cache(maxsize=512)
 def classify_text(text: str) -> DocumentCategory:
-    """Classify text using optimized fuzzy matching with caching"""
+    """Classify text using fuzzy matching (rapidfuzz) with caching.
+
+    Returns UNCLASSIFIED when no keyword reaches the similarity threshold.
+    """
     if not text:
         return DocumentCategory.UNCLASSIFIED
 
-    # Limit text length for matching
-    text_lower = text[:2000].lower()
-
+    text = text.strip()
     best_category = DocumentCategory.UNCLASSIFIED
     best_score = 0.0
 
-    for category, keywords in _PREPROCESSED_KEYWORDS.items():
+    for category, keywords in CATEGORY_KEYWORDS.items():
         for kw in keywords:
             try:
-                score = fuzz.token_set_ratio(kw, text_lower)
+                score = fuzz.token_set_ratio(kw.lower(), text.lower())
             except Exception:
                 score = 0.0
             if score > best_score:
@@ -476,16 +424,25 @@ def classify_text(text: str) -> DocumentCategory:
 
 
 def parse_stored_filename(filename: str) -> dict[str, str] | None:
-    """Parse metadata from stored filename format"""
+    """Parse metadata from stored filename format:
+    {category}__{name}_{lastname}__{original}_{uuid}_{idx}{ext}
+
+    Returns a dict with keys: id, category, name, original
+    """
     parts = filename.split("__")
+    # Expect at least 3 segments: category, name_lastname, rest
     if len(parts) < 3:
         return None
 
     category = parts[0]
     name = parts[1]
+
+    # The remainder may contain original, uuid and index joined by underscores
     remainder = "__".join(parts[2:])
     stem = Path(remainder).stem
 
+    # Try to split off the uuid (36-char UUID) which we expect near the end
+    # Format we created: {original}_{uuid}_{idx}
     rev_parts = stem.rsplit("_", 2)
     if len(rev_parts) == 3:
         original, maybe_uuid, _ = rev_parts
@@ -559,6 +516,7 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
             while chunk := await upload_file.read(8192):
                 total_size += len(chunk)
                 if total_size > settings.max_file_size:
+                    # cleanup and signal payload too large
                     tmp_path.unlink(missing_ok=True)
                     raise HTTPException(
                         status_code=413,
@@ -569,8 +527,10 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
                     )
                 await afp.write(chunk)
     except HTTPException:
+        # propagate HTTP errors raised above
         raise
     except OSError as exc:
+        # filesystem/read/write errors
         tmp_path.unlink(missing_ok=True)
         logger.exception("Failed to save upload: %s", upload_file.filename)
         raise HTTPException(
@@ -578,6 +538,7 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
             detail=f"Failed to save uploaded file: {upload_file.filename}",
         ) from exc
     else:
+        # success
         return (upload_file.filename, tmp_path)
 
 
@@ -585,7 +546,7 @@ async def process_single_file(
     file_data: tuple[str, Path],
     name: str,
     lastname: str,
-    ocr_executor: ProcessPoolExecutor,
+    executor: ThreadPoolExecutor,
 ) -> ProcessedFile | None:
     """Process a single uploaded file: OCR, classify, and store"""
     original_name, tmp_path = file_data
@@ -596,45 +557,9 @@ async def process_single_file(
         async with aiofiles.open(tmp_path, "rb") as afp:
             file_bytes = await afp.read()
 
-        # Pre-process images in-process to reduce IPC size when possible
-        if ext != ".pdf":
-            try:
-                img = Image.open(io.BytesIO(file_bytes))
-                if img.mode not in ("RGB", "L"):
-                    img = img.convert("RGB")
-                max_size = settings.image_max_size
-                if max(img.size) > max_size:
-                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=75)
-                file_bytes = buf.getvalue()
-            except Exception:
-                # If pre-processing fails, continue with original bytes
-                logger.debug("Image pre-processing failed, using original bytes")
-
-        # Extract text in process pool (true parallelism) with timeout
+        # Extract text in thread pool
         loop = asyncio.get_running_loop()
-        try:
-            if ext == ".pdf":
-                fut = loop.run_in_executor(
-                    ocr_executor,
-                    _extract_text_from_pdf_worker,
-                    file_bytes,
-                    settings.max_pages_ocr,
-                    settings.max_text_extract_length,
-                )
-            else:
-                fut = loop.run_in_executor(
-                    ocr_executor,
-                    _extract_text_from_image_worker,
-                    file_bytes,
-                    settings.max_text_extract_length,
-                )
-
-            text = await asyncio.wait_for(fut, timeout=settings.ocr_timeout_seconds)
-        except TimeoutError:
-            logger.warning("OCR timed out for file: %s", original_name)
-            text = ""
+        text = await loop.run_in_executor(executor, extract_text, file_bytes, ext)
 
         # Classify
         category = classify_text(text)
@@ -644,16 +569,19 @@ async def process_single_file(
         size = len(file_bytes)
         modified = int(time.time())
 
+        # Save if classified
         filename = ""
         status = "unclassified"
 
         if category != DocumentCategory.UNCLASSIFIED:
+            # Format: {category}__{name}_{lastname}__{original}_{uuid}_{idx}{ext}
             base_name = (
                 f"{category.value}__"
                 f"{sanitize_name(name)}_{sanitize_name(lastname)}__"
                 f"{sanitize_name(Path(original_name).stem)}"
             )
 
+            # Find unique filename with uuid postfix and index
             idx = 1
             while True:
                 candidate = f"{base_name}_{file_id}_{idx}{ext}"
@@ -665,7 +593,7 @@ async def process_single_file(
                     logger.info("Saved file: %s as %s", original_name, category.value)
                     break
                 idx += 1
-                if idx > 1000:
+                if idx > 1000:  # Safety limit
                     logger.error("Too many file collisions for %s", base_name)
                     break
 
@@ -716,32 +644,6 @@ async def cleanup_old_files() -> int:
 
 
 # ============================================================================
-# STREAMING ZIP GENERATOR
-# ============================================================================
-
-
-async def generate_zip_stream(files: list[Path]) -> AsyncGenerator[bytes]:
-    """Generate ZIP file in chunks to reduce memory usage"""
-    # Create temp file for ZIP
-    fd, tmp_path = tempfile.mkstemp(suffix=".zip")
-    os.close(fd)
-
-    try:
-        # Write ZIP to temp file
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as archive:
-            for file_path in files:
-                archive.write(file_path, arcname=file_path.name)
-
-        # Stream file in chunks
-        async with aiofiles.open(tmp_path, "rb") as f:
-            while chunk := await f.read(65536):  # 64KB chunks
-                yield chunk
-    finally:
-        with suppress(Exception):
-            Path(tmp_path).unlink()
-
-
-# ============================================================================
 # FASTAPI APPLICATION
 # ============================================================================
 
@@ -753,13 +655,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     settings.upload_folder.mkdir(parents=True, exist_ok=True)
 
     app.state.rate_limiter = RateLimiter(settings.rate_limit_per_minute)
-
-    # Separate executors: threads for I/O, processes for CPU
-    app.state.io_executor = ThreadPoolExecutor(max_workers=settings.max_workers)
-    app.state.ocr_executor = ProcessPoolExecutor(
-        max_workers=settings.ocr_workers,
-        initializer=_init_ocr_worker,
-    )
+    app.state.executor = ThreadPoolExecutor(max_workers=settings.max_workers)
 
     # Background cleanup task
     async def cleanup_loop() -> None:
@@ -774,7 +670,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
                 logger.exception("Cleanup loop error")
 
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
-    logger.info("Application started with %d OCR workers", settings.ocr_workers)
+    logger.info("Application started")
 
     yield
 
@@ -783,15 +679,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     with suppress(asyncio.CancelledError):
         await app.state.cleanup_task
 
-    app.state.io_executor.shutdown(wait=True)
-    app.state.ocr_executor.shutdown(wait=True)
+    app.state.executor.shutdown(wait=True)
     logger.info("Application shutdown complete")
 
 
 app = FastAPI(
     title="AI Reception - Document Classification",
     description="OCR-based document classification system",
-    version="0.1.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -814,21 +709,20 @@ async def health_check() -> HealthCheck:
     """Health check endpoint"""
     return HealthCheck(
         status="healthy",
-        version="0.1.0",
+        version="2.1.0",
         workers=settings.max_workers,
-        ocr_workers=settings.ocr_workers,
         upload_folder_exists=settings.upload_folder.exists(),
     )
 
 
-@app.post("/upload", response_model=list[ProcessedFile])
+@app.post("/upload")
 async def upload_files(
     request: Request,
     background_tasks: BackgroundTasks,
     name: Annotated[str, Form(min_length=1, max_length=100)],
     lastname: Annotated[str, Form(min_length=1, max_length=100)],
     files: Annotated[list[UploadFile], File()],
-) -> list[ProcessedFile]:
+ ) -> list[dict]:
     """Upload and process multiple files"""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -846,21 +740,6 @@ async def upload_files(
             status_code=429, detail="Rate limit exceeded. Please try again later."
         )
 
-    # Enforce max request size early if client provided Content-Length
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > settings.max_request_size:
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        f"Total request size exceeds {settings.max_request_size} bytes"
-                    ),
-                )
-        except ValueError:
-            # Ignore malformed header
-            pass
-
     # Save uploads to temp
     temp_files: list[tuple[str, Path]] = []
     for upload_file in files:
@@ -875,10 +754,10 @@ async def upload_files(
         )
 
     try:
-        # Process files in parallel using OCR process pool
-        ocr_executor = request.app.state.ocr_executor
+        # Process files in parallel
+        executor = request.app.state.executor
         tasks = [
-            process_single_file(file_data, name, lastname, ocr_executor)
+            process_single_file(file_data, name, lastname, executor)
             for file_data in temp_files
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -891,7 +770,8 @@ async def upload_files(
         if errors:
             logger.error("Processing errors: %d files failed", len(errors))
 
-        return processed
+        # Convert to client format and return
+        return [processed_file_to_client(p) for p in processed]
 
     finally:
         # Cleanup temp files in background
@@ -903,12 +783,12 @@ async def upload_files(
         background_tasks.add_task(cleanup_temps)
 
 
-@app.get("/files", response_model=list[ProcessedFile])
+@app.get("/files")
 async def list_files(
     category: Annotated[str | None, Query(description="Filter by category")] = None,
     name: Annotated[str | None, Query(description="Filter by name")] = None,
     lastname: Annotated[str | None, Query(description="Filter by lastname")] = None,
-) -> list[ProcessedFile]:
+) -> list[dict]:
     """List all stored files with optional filtering"""
     if not settings.upload_folder.exists():
         return []
@@ -919,10 +799,12 @@ async def list_files(
         if not file_path.is_file():
             continue
 
+        # Parse filename
         metadata = parse_stored_filename(file_path.name)
         if not metadata:
             continue
 
+        # Apply filters
         if category and metadata["category"] != category:
             continue
         if name and sanitize_name(name) not in metadata["name"]:
@@ -946,7 +828,8 @@ async def list_files(
         except OSError:
             logger.exception("Failed to stat file: %s", file_path)
 
-    return results
+    # Convert to client format before returning
+    return [processed_file_to_client(p) for p in results]
 
 
 @app.get("/files/{file_id}")
@@ -955,6 +838,7 @@ async def download_file(file_id: str) -> FileResponse:
     if not settings.upload_folder.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
+    # Find file with matching parsed ID
     target_file = None
     for file_path in settings.upload_folder.iterdir():
         if not file_path.is_file():
@@ -969,6 +853,7 @@ async def download_file(file_id: str) -> FileResponse:
     if not target_file or not target_file.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
+    # Security check: ensure file is within upload folder
     try:
         target_file.resolve().relative_to(settings.upload_folder.resolve())
     except ValueError:
@@ -987,7 +872,7 @@ async def download_zip(
     lastname: Annotated[str, Query(min_length=1, max_length=100)],
     category: Annotated[str | None, Query(description="Filter by category")] = None,
 ) -> StreamingResponse:
-    """Download multiple files as ZIP archive with streaming"""
+    """Download multiple files as ZIP archive"""
     if not settings.upload_folder.exists():
         raise HTTPException(status_code=404, detail="No files found")
 
@@ -1005,11 +890,13 @@ async def download_zip(
         if not metadata:
             continue
 
+        # Check name and lastname match
         if sanitized_name not in metadata["name"]:
             continue
         if sanitized_lastname not in metadata["name"]:
             continue
 
+        # Check category if specified
         if category and metadata["category"] != category:
             continue
 
@@ -1018,11 +905,18 @@ async def download_zip(
     if not matching_files:
         raise HTTPException(status_code=404, detail="No matching files found")
 
+    # Create ZIP in memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for file_path in matching_files:
+            archive.write(file_path, arcname=file_path.name)
+
+    zip_buffer.seek(0)
+
     filename = f"{sanitized_name}_{sanitized_lastname}_documents.zip"
 
-    # Stream ZIP instead of building in memory
     return StreamingResponse(
-        generate_zip_stream(matching_files),
+        zip_buffer,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -1062,6 +956,7 @@ async def _delete_file_by_id(file_id: str) -> FileDeleteResponse:
     except OSError:
         logger.debug("Could not stat file before deletion: %s", filename)
 
+    # Extract stored metadata where possible
     parsed = parse_stored_filename(filename) or {}
 
     resp = FileDeleteResponse(
@@ -1086,6 +981,7 @@ async def _delete_file_by_id(file_id: str) -> FileDeleteResponse:
     if deleted:
         return resp
 
+    # Should not reach here - raise to indicate failure
     raise HTTPException(status_code=500, detail="Failed to delete file")
 
 

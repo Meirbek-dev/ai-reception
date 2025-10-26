@@ -20,4 +20,16 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  server: {
+    port: 5173,
+    proxy: {
+      // Forward API calls to the backend server running on :5040
+      '/upload': 'http://localhost:5040',
+      '/files': 'http://localhost:5040',
+      '/download_zip': 'http://localhost:5040',
+      '/icons': 'http://localhost:5040',
+      '/health': 'http://localhost:5040',
+      '/download': 'http://localhost:5040'
+    },
+  },
 })

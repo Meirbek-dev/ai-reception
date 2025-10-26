@@ -40,11 +40,17 @@ import {
 
 // Types
 interface UploadedFile {
+  id?: string | null;
+  uid: string;
   originalName: string;
-  id?: string;
-  newName?: string;
-  filename?: string;
+  // Stored filename on disk (may be null when not stored)
+  newName?: string | null;
+  filename?: string | null;
   category: string;
+  // Optional metadata
+  size?: number | null;
+  modified?: number | null;
+  status?: string | null;
 }
 
 interface CategoryInfo {
@@ -67,12 +73,20 @@ const strings = {
 };
 
 // Backend origin helper
+// In development we always point to the API running on localhost:5040.
+// In production we use the current origin (static files served by backend).
 const getBackendOrigin = () => {
-  const host = window.location.hostname;
-  const port = window.location.port;
-  return (host === "localhost" || host === "127.0.0.1") && port !== "5040"
-    ? "http://localhost:5040"
-    : window.location.origin;
+  try {
+    // @ts-ignore
+    if (import.meta.env && import.meta.env.DEV) {
+      // In dev, the backend runs on port 5040
+      return "http://localhost:5040";
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return window.location.origin;
 };
 
 // Category configurations
@@ -114,8 +128,9 @@ const categoryInfo: Record<string, CategoryInfo> = {
   },
 };
 
-const getFileIcon = (filename: string) => {
-  const ext = filename.toLowerCase().split(".").pop() || "";
+const getFileIcon = (filename?: string) => {
+  if (!filename) return File;
+  const ext = String(filename).toLowerCase().split(".").pop() || "";
   switch (ext) {
     case "pdf":
       return FileText;
@@ -185,16 +200,31 @@ export default function AIReceptionApp() {
         body: formData,
       });
 
-      if (response.ok) {
-        const filesUrl = `${getBackendOrigin()}/files`;
-        const filesResponse = await fetch(filesUrl);
-        if (filesResponse.ok) {
-          const filesData = await filesResponse.json();
-          setFiles(filesData);
-        }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        console.error("Upload failed, status:", response.status, text);
+        // small UX hint: briefly show overlayReject to indicate failure
+        setOverlayReject(true);
+        setTimeout(() => setOverlayReject(false), 1200);
+        return;
       }
+
+      const filesUrl = `${getBackendOrigin()}/files`;
+      const filesResponse = await fetch(filesUrl);
+      if (!filesResponse.ok) {
+        console.error(
+          "Failed to fetch files list after upload",
+          filesResponse.status
+        );
+        return;
+      }
+
+      const filesData = await filesResponse.json();
+      setFiles(filesData as UploadedFile[]);
     } catch (error) {
       console.error("Upload failed:", error);
+      setOverlayReject(true);
+      setTimeout(() => setOverlayReject(false), 1200);
     } finally {
       setIsLoading(false);
     }
@@ -257,14 +287,24 @@ export default function AIReceptionApp() {
       const url = `${getBackendOrigin()}/files/${encodeURIComponent(file.id)}`;
       const response = await fetch(url, { method: "DELETE" });
 
-      if (response.ok) {
-        const filesUrl = `${getBackendOrigin()}/files`;
-        const filesResponse = await fetch(filesUrl);
-        if (filesResponse.ok) {
-          const filesData = await filesResponse.json();
-          setFiles(filesData);
-        }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        console.error("Delete failed, status:", response.status, text);
+        return;
       }
+
+      const filesUrl = `${getBackendOrigin()}/files`;
+      const filesResponse = await fetch(filesUrl);
+      if (!filesResponse.ok) {
+        console.error(
+          "Failed to fetch files list after delete",
+          filesResponse.status
+        );
+        return;
+      }
+
+      const filesData = await filesResponse.json();
+      setFiles(filesData as UploadedFile[]);
     } catch (error) {
       console.error("Delete failed:", error);
     }
@@ -275,8 +315,13 @@ export default function AIReceptionApp() {
     const url = `${getBackendOrigin()}/files/${encodeURIComponent(file.id)}`;
     const a = document.createElement("a");
     a.href = url;
+    a.target = "_blank";
+    a.rel = "noreferrer";
     a.download = file.newName || file.originalName;
+    // Some browsers require the anchor to be in DOM
+    document.body.appendChild(a);
     a.click();
+    a.remove();
   };
 
   const downloadAll = () => {
@@ -285,33 +330,37 @@ export default function AIReceptionApp() {
     )}&lastname=${encodeURIComponent(lastName)}`;
     const a = document.createElement("a");
     a.href = url;
+    a.target = "_blank";
+    a.rel = "noreferrer";
     a.download = "documents.zip";
+    document.body.appendChild(a);
     a.click();
+    a.remove();
   };
 
-  const toggleSelection = (id: string) => {
+  const toggleSelection = (uid: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
+      if (next.has(uid)) {
+        next.delete(uid);
       } else {
-        next.add(id);
+        next.add(uid);
       }
       return next;
     });
   };
 
   const toggleSelectAll = () => {
-    const allIds = files.map((f) => f.originalName);
+    const allUids = files.map((f) => f.uid);
     if (selected.size === files.length && files.length > 0) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(allIds));
+      setSelected(new Set(allUids));
     }
   };
 
   const deleteSelected = async () => {
-    const filesToDelete = files.filter((f) => selected.has(f.originalName));
+    const filesToDelete = files.filter((f) => selected.has(f.uid));
     for (const file of filesToDelete) {
       await deleteFile(file);
     }
@@ -570,7 +619,7 @@ export default function AIReceptionApp() {
                         const FileIcon = getFileIcon(file.originalName);
                         return (
                           <div
-                            key={file.originalName}
+                            key={file.uid}
                             className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50"
                           >
                             <div className="p-2 rounded-lg bg-muted">
@@ -590,9 +639,9 @@ export default function AIReceptionApp() {
 
                             <div className="flex items-center gap-2">
                               <Checkbox
-                                checked={selected.has(file.originalName)}
+                                checked={selected.has(file.uid)}
                                 onCheckedChange={() =>
-                                  toggleSelection(file.originalName)
+                                  toggleSelection(file.uid)
                                 }
                               />
                               <Button

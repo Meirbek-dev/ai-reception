@@ -335,35 +335,52 @@ export default function AIReceptionApp() {
 
   return (
     <div
-      className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors"
+      className="min-h-screen bg-background dark:bg-background transition-colors"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <header className="sticky top-0 z-50 border-b bg-indigo-50 dark:bg-indigo-950 shadow-sm">
+      <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white font-bold text-xl">
-                AI
-              </div>
-              <h1 className="hidden sm:block text-xl font-bold text-indigo-900 dark:text-indigo-100">
+            {/* Left: Logo */}
+            <div className="flex items-center">
+              <a href="#" aria-label="Home" className="block">
+                <img
+                  src={isDark ? "/logo_light.png" : "/logo_dark.png"}
+                  alt="Logo"
+                  className="h-10 w-fit object-contain"
+                />
+              </a>
+            </div>
+
+            {/* Center: App Title */}
+            <div className="flex-1 flex items-center justify-center">
+              <h1
+                className={`text-lg sm:text-xl font-bold ${
+                  isDark ? "text-foreground" : "text-tou"
+                }`}
+              >
                 {strings.appTitle}
               </h1>
             </div>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsDark(!isDark)}
-              className="rounded-full"
-            >
-              {isDark ? (
-                <Sun className="h-5 w-5" />
-              ) : (
-                <Moon className="h-5 w-5" />
-              )}
-            </Button>
+            {/* Right: Theme switcher */}
+            <div className="flex items-center justify-end">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsDark(!isDark)}
+                className="rounded-full"
+                aria-label="Toggle theme"
+              >
+                {isDark ? (
+                  <Sun className="h-5 w-5" />
+                ) : (
+                  <Moon className="h-5 w-5 text-tou" />
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </header>
@@ -371,7 +388,7 @@ export default function AIReceptionApp() {
       <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8">
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle className="flex items-center gap-3 text-indigo-700 dark:text-indigo-400">
+            <CardTitle className="flex items-center gap-3 text-foreground">
               <User className="h-6 w-6" />
               {strings.appHeader}
             </CardTitle>
@@ -401,11 +418,11 @@ export default function AIReceptionApp() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-3">
+              <div className="flex items-center gap-3">
                 <Button
                   onClick={pickFiles}
                   disabled={!isFormValid() || isLoading}
-                  className="flex-1 sm:flex-none"
+                  className="flex-1 min-w-0"
                 >
                   {isLoading ? (
                     <>
@@ -419,7 +436,11 @@ export default function AIReceptionApp() {
                     </>
                   )}
                 </Button>
-                <Button variant="outline" onClick={reset}>
+                <Button
+                  variant="outline"
+                  onClick={reset}
+                  className="flex-none whitespace-nowrap"
+                >
                   <RefreshCw className="mr-2 h-4 w-4" />
                   Новый абитуриент
                 </Button>
@@ -431,17 +452,17 @@ export default function AIReceptionApp() {
         </Card>
 
         <Card
-          className="mb-6 cursor-pointer hover:border-indigo-400 transition-colors"
+          className="mb-6 cursor-pointer hover:shadow-sm transition-shadow"
           onClick={pickFiles}
         >
           <CardContent className="py-12">
             <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <CloudUpload className="h-12 w-12 text-indigo-600 dark:text-indigo-400" />
+              <CloudUpload className="h-12 w-12" />
               <div>
-                <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
+                <p className="text-lg font-medium text-foreground">
                   Перетащите или нажмите, чтобы выбрать файлы
                 </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                <p className="text-sm text-muted-foreground mt-2">
                   Поддерживаемые форматы: PDF, JPG, PNG
                 </p>
               </div>
@@ -464,12 +485,12 @@ export default function AIReceptionApp() {
           <Card>
             <CardContent className="py-16">
               <div className="flex flex-col items-center justify-center text-center space-y-4">
-                <FolderOpen className="h-14 w-14 text-gray-300 dark:text-gray-600" />
+                <FolderOpen className="h-14 w-14 " />
                 <div>
-                  <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
+                  <p className="text-lg font-medium text-foreground">
                     {strings.noFiles}
                   </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                  <p className="text-sm text-muted-foreground mt-2">
                     Заполните форму и загрузите документы для автоматической
                     классификации.
                   </p>
@@ -485,7 +506,7 @@ export default function AIReceptionApp() {
                   checked={selected.size === files.length && files.length > 0}
                   onCheckedChange={toggleSelectAll}
                 />
-                <span className="font-semibold text-gray-700 dark:text-gray-300">
+                <span className="font-semibold text-foreground">
                   Загруженные документы ({files.length})
                 </span>
               </div>
@@ -524,16 +545,10 @@ export default function AIReceptionApp() {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-3">
-                        <div
-                          className="p-2 rounded-full"
-                          style={{ backgroundColor: `${info.color}20` }}
-                        >
-                          <Icon
-                            className="h-5 w-5"
-                            style={{ color: info.color }}
-                          />
+                        <div className="p-2 rounded-full bg-muted">
+                          <Icon className="h-5 w-5 text-foreground" />
                         </div>
-                        <span className="font-semibold">
+                        <span className="font-semibold text-foreground">
                           {info.name} ({categoryFiles.length})
                         </span>
                       </div>
@@ -546,7 +561,7 @@ export default function AIReceptionApp() {
                           });
                         }}
                       >
-                        <Download className="h-4 w-4" />
+                        <Download className="h-4 w-4 " />
                       </Button>
                     </div>
 
@@ -556,24 +571,18 @@ export default function AIReceptionApp() {
                         return (
                           <div
                             key={file.originalName}
-                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800"
+                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50"
                           >
-                            <div
-                              className="p-2 rounded-lg"
-                              style={{ backgroundColor: `${info.color}15` }}
-                            >
-                              <FileIcon
-                                className="h-5 w-5"
-                                style={{ color: info.color }}
-                              />
+                            <div className="p-2 rounded-lg bg-muted">
+                              <FileIcon className="h-5 w-5 text-foreground" />
                             </div>
 
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm truncate">
+                              <p className="font-medium text-sm truncate text-foreground">
                                 {file.originalName}
                               </p>
                               {file.newName && (
-                                <p className="text-xs text-gray-500">
+                                <p className="text-xs text-muted-foreground">
                                   Сохранено как {file.newName}
                                 </p>
                               )}
@@ -591,7 +600,7 @@ export default function AIReceptionApp() {
                                 size="icon"
                                 onClick={() => downloadFile(file)}
                               >
-                                <Download className="h-4 w-4" />
+                                <Download className="h-4 w-4 " />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -630,9 +639,9 @@ export default function AIReceptionApp() {
           >
             <div className="flex flex-col items-center space-y-4">
               {overlayReject ? (
-                <X className="h-14 w-14 text-red-500" />
+                <X className="h-14 w-14 text-destructive" />
               ) : (
-                <CloudUpload className="h-14 w-14 text-indigo-600" />
+                <CloudUpload className="h-14 w-14 " />
               )}
               <div className="text-center">
                 <p className="text-lg font-semibold">
@@ -640,7 +649,7 @@ export default function AIReceptionApp() {
                     ? "Неверный формат файла"
                     : "Перетащите файлы, чтобы загрузить"}
                 </p>
-                <p className="text-sm text-gray-500 mt-2">
+                <p className="text-sm text-muted-foreground mt-2">
                   {overlayReject
                     ? "Поддерживаются: PDF, JPG, PNG"
                     : "Отпустите файлы, чтобы начать загрузку"}

@@ -1,0 +1,696 @@
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import {
+  CloudUpload,
+  FileUp,
+  FolderOpen,
+  Download,
+  Trash2,
+  User,
+  CreditCard,
+  GraduationCap,
+  ClipboardList,
+  Tag,
+  HelpCircle,
+  Syringe,
+  Heart,
+  FileText,
+  ImageIcon,
+  File,
+  Sun,
+  Moon,
+  RefreshCw,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+// Types
+interface UploadedFile {
+  originalName: string;
+  id?: string;
+  newName?: string;
+  filename?: string;
+  category: string;
+}
+
+interface CategoryInfo {
+  name: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color: string;
+}
+
+// Strings for i18n
+const strings = {
+  appTitle: "AI Reception",
+  appHeader: "Информация об абитуриенте",
+  nameLabel: "Имя",
+  lastNameLabel: "Фамилия",
+  uploadBtn: "Загрузить документы",
+  uploading: "Обработка файлов...",
+  uploadSuccess: "Документы успешно обработаны и классифицированы",
+  uploadFail: "Ошибка при загрузке файлов. Попробуйте снова.",
+  noFiles: "Нет загруженных документов",
+};
+
+// Backend origin helper
+const getBackendOrigin = () => {
+  const host = window.location.hostname;
+  const port = window.location.port;
+  return (host === "localhost" || host === "127.0.0.1") && port !== "5040"
+    ? "http://localhost:5040"
+    : window.location.origin;
+};
+
+// Category configurations
+const categoryInfo: Record<string, CategoryInfo> = {
+  Udostoverenie: {
+    name: "Удостоверение",
+    icon: CreditCard,
+    color: "rgb(59, 130, 246)",
+  },
+  Diplom: {
+    name: "Диплом/Аттестат",
+    icon: GraduationCap,
+    color: "rgb(168, 85, 247)",
+  },
+  ENT: {
+    name: "ЕНТ",
+    icon: ClipboardList,
+    color: "rgb(249, 115, 22)",
+  },
+  Lgota: {
+    name: "Льгота",
+    icon: Tag,
+    color: "rgb(34, 197, 94)",
+  },
+  Unclassified: {
+    name: "Неизвестно",
+    icon: HelpCircle,
+    color: "rgb(156, 163, 175)",
+  },
+  Privivka: {
+    name: "Прививочный паспорт",
+    icon: Syringe,
+    color: "rgb(20, 184, 166)",
+  },
+  MedSpravka: {
+    name: "Медицинская справка",
+    icon: Heart,
+    color: "rgb(239, 68, 68)",
+  },
+};
+
+const getFileIcon = (filename: string) => {
+  const ext = filename.toLowerCase().split(".").pop() || "";
+  switch (ext) {
+    case "pdf":
+      return FileText;
+    case "jpg":
+    case "jpeg":
+    case "png":
+      return ImageIcon;
+    default:
+      return File;
+  }
+};
+
+// Main App Component
+export default function AIReceptionApp() {
+  const [isDark, setIsDark] = useState(false);
+  const [name, setName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [dragActive, setDragActive] = useState(false);
+  const [overlayReject, setOverlayReject] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [fileToDelete, setFileToDelete] = useState<UploadedFile | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [isDark]);
+
+  const isFormValid = useCallback(() => {
+    const trimmedName = name.trim();
+    const trimmedLast = lastName.trim();
+    if (trimmedName.length < 2 || trimmedLast.length < 2) return false;
+    const noDigits = /^[^0-9]+$/;
+    return noDigits.test(trimmedName) && noDigits.test(trimmedLast);
+  }, [name, lastName]);
+
+  const validateFiles = (fileList: FileList | File[]) => {
+    const allowed = new Set(["pdf", "jpg", "jpeg", "png"]);
+    const filesArray = Array.from(fileList);
+    const invalid = filesArray.filter((f) => {
+      const ext = f.name.toLowerCase().split(".").pop() || "";
+      return !allowed.has(ext);
+    });
+    return { valid: invalid.length === 0, invalid };
+  };
+
+  const uploadFiles = async (fileList: File[]) => {
+    if (isLoading) return;
+
+    setIsLoading(true);
+
+    const formData = new FormData();
+    fileList.forEach((file) => formData.append("files", file));
+    formData.append("name", name);
+    formData.append("lastname", lastName);
+
+    try {
+      const uploadUrl = `${getBackendOrigin()}/upload`;
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (response.ok) {
+        const filesUrl = `${getBackendOrigin()}/files`;
+        const filesResponse = await fetch(filesUrl);
+        if (filesResponse.ok) {
+          const filesData = await filesResponse.json();
+          setFiles(filesData);
+        }
+      }
+    } catch (error) {
+      console.error("Upload failed:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = () => {
+    setDragActive(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    const { valid } = validateFiles(droppedFiles);
+
+    if (!valid) {
+      setOverlayReject(true);
+      setTimeout(() => setOverlayReject(false), 1000);
+      return;
+    }
+
+    if (isFormValid()) {
+      uploadFiles(droppedFiles);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+
+    const selectedFiles = Array.from(e.target.files);
+    const { valid } = validateFiles(selectedFiles);
+
+    if (!valid) {
+      setOverlayReject(true);
+      setTimeout(() => setOverlayReject(false), 900);
+      return;
+    }
+
+    uploadFiles(selectedFiles);
+  };
+
+  const pickFiles = () => {
+    if (!isFormValid() || isLoading) return;
+    fileInputRef.current?.click();
+  };
+
+  const deleteFile = async (file: UploadedFile) => {
+    if (!file.id) {
+      setFiles((prev) => prev.filter((f) => f !== file));
+      return;
+    }
+
+    try {
+      const url = `${getBackendOrigin()}/files/${encodeURIComponent(file.id)}`;
+      const response = await fetch(url, { method: "DELETE" });
+
+      if (response.ok) {
+        const filesUrl = `${getBackendOrigin()}/files`;
+        const filesResponse = await fetch(filesUrl);
+        if (filesResponse.ok) {
+          const filesData = await filesResponse.json();
+          setFiles(filesData);
+        }
+      }
+    } catch (error) {
+      console.error("Delete failed:", error);
+    }
+  };
+
+  const downloadFile = (file: UploadedFile) => {
+    if (!file.id) return;
+    const url = `${getBackendOrigin()}/files/${encodeURIComponent(file.id)}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.newName || file.originalName;
+    a.click();
+  };
+
+  const downloadAll = () => {
+    const url = `${getBackendOrigin()}/download_zip?name=${encodeURIComponent(
+      name
+    )}&lastname=${encodeURIComponent(lastName)}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "documents.zip";
+    a.click();
+  };
+
+  const toggleSelection = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const allIds = files.map((f) => f.originalName);
+    if (selected.size === files.length && files.length > 0) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(allIds));
+    }
+  };
+
+  const deleteSelected = async () => {
+    const filesToDelete = files.filter((f) => selected.has(f.originalName));
+    for (const file of filesToDelete) {
+      await deleteFile(file);
+    }
+    setSelected(new Set());
+  };
+
+  const reset = () => {
+    setName("");
+    setLastName("");
+    setFiles([]);
+    setSelected(new Set());
+  };
+
+  const groupedFiles = files.reduce((acc, file) => {
+    if (!acc[file.category]) {
+      acc[file.category] = [];
+    }
+    acc[file.category].push(file);
+    return acc;
+  }, {} as Record<string, UploadedFile[]>);
+
+  return (
+    <div
+      className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <header className="sticky top-0 z-50 border-b bg-indigo-50 dark:bg-indigo-950 shadow-sm">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex h-16 items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white font-bold text-xl">
+                AI
+              </div>
+              <h1 className="hidden sm:block text-xl font-bold text-indigo-900 dark:text-indigo-100">
+                {strings.appTitle}
+              </h1>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsDark(!isDark)}
+              className="rounded-full"
+            >
+              {isDark ? (
+                <Sun className="h-5 w-5" />
+              ) : (
+                <Moon className="h-5 w-5" />
+              )}
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8">
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-3 text-indigo-700 dark:text-indigo-400">
+              <User className="h-6 w-6" />
+              {strings.appHeader}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name">{strings.nameLabel}</Label>
+                  <Input
+                    id="name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={isLoading}
+                    placeholder="Введите имя"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="lastName">{strings.lastNameLabel}</Label>
+                  <Input
+                    id="lastName"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    disabled={isLoading}
+                    placeholder="Введите фамилию"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={pickFiles}
+                  disabled={!isFormValid() || isLoading}
+                  className="flex-1 sm:flex-none"
+                >
+                  {isLoading ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      {strings.uploading}
+                    </>
+                  ) : (
+                    <>
+                      <CloudUpload className="mr-2 h-4 w-4" />
+                      {strings.uploadBtn}
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={reset}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Новый абитуриент
+                </Button>
+              </div>
+
+              {isLoading && <Progress value={undefined} className="w-full" />}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card
+          className="mb-6 cursor-pointer hover:border-indigo-400 transition-colors"
+          onClick={pickFiles}
+        >
+          <CardContent className="py-12">
+            <div className="flex flex-col items-center justify-center text-center space-y-4">
+              <CloudUpload className="h-12 w-12 text-indigo-600 dark:text-indigo-400" />
+              <div>
+                <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
+                  Перетащите или нажмите, чтобы выбрать файлы
+                </p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                  Поддерживаемые форматы: PDF, JPG, PNG
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                disabled={!isFormValid() || isLoading}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  pickFiles();
+                }}
+              >
+                <FileUp className="mr-2 h-4 w-4" />
+                Выбрать файлы
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {files.length === 0 ? (
+          <Card>
+            <CardContent className="py-16">
+              <div className="flex flex-col items-center justify-center text-center space-y-4">
+                <FolderOpen className="h-14 w-14 text-gray-300 dark:text-gray-600" />
+                <div>
+                  <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
+                    {strings.noFiles}
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                    Заполните форму и загрузите документы для автоматической
+                    классификации.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  checked={selected.size === files.length && files.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+                <span className="font-semibold text-gray-700 dark:text-gray-300">
+                  Загруженные документы ({files.length})
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" size="sm" onClick={downloadAll}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Скачать всё
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={selected.size === 0}
+                  onClick={() => {
+                    if (selected.size > 0) {
+                      setDeleteDialogOpen(true);
+                    }
+                  }}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Удалить
+                </Button>
+              </div>
+            </div>
+
+            {Object.entries(groupedFiles).map(([category, categoryFiles]) => {
+              const info = categoryInfo[category] || {
+                name: category,
+                icon: File,
+                color: "rgb(156, 163, 175)",
+              };
+              const Icon = info.icon;
+
+              return (
+                <Card key={category}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="p-2 rounded-full"
+                          style={{ backgroundColor: `${info.color}20` }}
+                        >
+                          <Icon
+                            className="h-5 w-5"
+                            style={{ color: info.color }}
+                          />
+                        </div>
+                        <span className="font-semibold">
+                          {info.name} ({categoryFiles.length})
+                        </span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          categoryFiles.forEach((f) => {
+                            if (f.id) downloadFile(f);
+                          });
+                        }}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {categoryFiles.map((file) => {
+                        const FileIcon = getFileIcon(file.originalName);
+                        return (
+                          <div
+                            key={file.originalName}
+                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800"
+                          >
+                            <div
+                              className="p-2 rounded-lg"
+                              style={{ backgroundColor: `${info.color}15` }}
+                            >
+                              <FileIcon
+                                className="h-5 w-5"
+                                style={{ color: info.color }}
+                              />
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-sm truncate">
+                                {file.originalName}
+                              </p>
+                              {file.newName && (
+                                <p className="text-xs text-gray-500">
+                                  Сохранено как {file.newName}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                checked={selected.has(file.originalName)}
+                                onCheckedChange={() =>
+                                  toggleSelection(file.originalName)
+                                }
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => downloadFile(file)}
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  setFileToDelete(file);
+                                  setDeleteDialogOpen(true);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+
+            <div className="text-center">
+              <Button variant="outline" onClick={reset}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Новый абитуриент
+              </Button>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {dragActive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 pointer-events-none">
+          <Card
+            className={`p-8 ${overlayReject ? "border-red-500 border-2" : ""}`}
+          >
+            <div className="flex flex-col items-center space-y-4">
+              {overlayReject ? (
+                <X className="h-14 w-14 text-red-500" />
+              ) : (
+                <CloudUpload className="h-14 w-14 text-indigo-600" />
+              )}
+              <div className="text-center">
+                <p className="text-lg font-semibold">
+                  {overlayReject
+                    ? "Неверный формат файла"
+                    : "Перетащите файлы, чтобы загрузить"}
+                </p>
+                <p className="text-sm text-gray-500 mt-2">
+                  {overlayReject
+                    ? "Поддерживаются: PDF, JPG, PNG"
+                    : "Отпустите файлы, чтобы начать загрузку"}
+                </p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.jpg,.jpeg,.png"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Подтвердите удаление</AlertDialogTitle>
+            <AlertDialogDescription>
+              {fileToDelete
+                ? `Удалить "${fileToDelete.originalName}"?`
+                : `Удалить ${selected.size} выбранных файлов?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setFileToDelete(null)}>
+              Отмена
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (fileToDelete) {
+                  deleteFile(fileToDelete);
+                  setFileToDelete(null);
+                } else {
+                  deleteSelected();
+                }
+                setDeleteDialogOpen(false);
+              }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

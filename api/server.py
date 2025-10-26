@@ -50,7 +50,6 @@ class Settings(BaseSettings):
     """Application settings with validation"""
 
     max_file_size: int = Field(default=50 * 1024 * 1024, gt=0)
-    max_request_size: int = Field(default=500 * 1024 * 1024, gt=0)
     max_workers: int = Field(default=min(4, os.cpu_count() or 1), gt=0)
     upload_folder: Path = Field(default=Path("uploads"))
     web_build_folder: Path = Field(default=Path("build/web"))
@@ -224,12 +223,6 @@ class HealthCheck(BaseModel):
     workers: int
     upload_folder_exists: bool
 
-
-class ErrorResponse(BaseModel):
-    """Standard error response"""
-
-    detail: str
-    error_code: str | None = None
 
 
 # ============================================================================

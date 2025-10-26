@@ -45,7 +45,6 @@ interface UploadedFile {
   originalName: string;
   // Stored filename on disk (may be null when not stored)
   newName?: string | null;
-  filename?: string | null;
   category: string;
   // Optional metadata
   size?: number | null;
@@ -75,19 +74,8 @@ const strings = {
 // Backend origin helper
 // In development we always point to the API running on localhost:5040.
 // In production we use the current origin (static files served by backend).
-const getBackendOrigin = () => {
-  try {
-    // @ts-ignore
-    if (import.meta.env && import.meta.env.DEV) {
-      // In dev, the backend runs on port 5040
-      return "http://localhost:5040";
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  return window.location.origin;
-};
+const getBackendOrigin = () =>
+  import.meta.env?.DEV ? "http://localhost:5040" : window.location.origin;
 
 // Category configurations
 const categoryInfo: Record<string, CategoryInfo> = {
@@ -141,6 +129,28 @@ const getFileIcon = (filename?: string) => {
     default:
       return File;
   }
+};
+
+// Normalize category keys coming from backend to frontend canonical keys
+const CATEGORY_KEY_MAP: Record<string, string> = {
+  udostoverenie: "Udostoverenie",
+  diplom: "Diplom",
+  ent: "ENT",
+  lgota: "Lgota",
+  unclassified: "Unclassified",
+  privivka: "Privivka",
+  medspravka: "MedSpravka",
+};
+
+// Tolerant normalization: strip non-alphanumerics and map to known keys,
+// otherwise fall back to Unclassified.
+const normalizeCategoryKey = (raw?: string | null): string => {
+  if (!raw) return "Unclassified";
+  const simple = String(raw)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  return CATEGORY_KEY_MAP[simple] || "Unclassified";
 };
 
 // Main App Component
@@ -209,18 +219,31 @@ export default function AIReceptionApp() {
         return;
       }
 
+      // Parse upload response (contains processed entries including unclassified)
+      const uploadResult = await response.json().catch(() => []);
+
+      // Also fetch persisted files from the server so we show both saved and
+      // just-processed (but not saved) files. Merge by uid to avoid dups.
       const filesUrl = `${getBackendOrigin()}/files`;
-      const filesResponse = await fetch(filesUrl);
-      if (!filesResponse.ok) {
-        console.error(
-          "Failed to fetch files list after upload",
-          filesResponse.status
-        );
-        return;
+      const filesResponse = await fetch(filesUrl).catch(() => null);
+      let persisted: UploadedFile[] = [];
+      if (filesResponse && filesResponse.ok) {
+        persisted = (await filesResponse.json()) as UploadedFile[];
       }
 
-      const filesData = await filesResponse.json();
-      setFiles(filesData as UploadedFile[]);
+      const merged: UploadedFile[] = [
+        // uploadResult first so recently processed (including unclassified)
+        // are visible immediately
+        ...(Array.isArray(uploadResult) ? uploadResult : []),
+        // then persisted ones that don't duplicate the same uid
+        ...persisted.filter(
+          (p) =>
+            !Array.isArray(uploadResult) ||
+            !(uploadResult as UploadedFile[]).some((u) => u.uid === p.uid)
+        ),
+      ];
+
+      setFiles(merged as UploadedFile[]);
     } catch (error) {
       console.error("Upload failed:", error);
       setOverlayReject(true);
@@ -375,10 +398,13 @@ export default function AIReceptionApp() {
   };
 
   const groupedFiles = files.reduce((acc, file) => {
-    if (!acc[file.category]) {
-      acc[file.category] = [];
+    // Normalize category using helper to map backend variations to canonical keys
+    const categoryKey = normalizeCategoryKey(file.category);
+
+    if (!acc[categoryKey]) {
+      acc[categoryKey] = [];
     }
-    acc[file.category].push(file);
+    acc[categoryKey].push(file);
     return acc;
   }, {} as Record<string, UploadedFile[]>);
 
@@ -436,13 +462,13 @@ export default function AIReceptionApp() {
 
       <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8">
         <Card className="mb-6">
-          <CardHeader>
+          <CardHeader className="py-4">
             <CardTitle className="flex items-center gap-3 text-foreground">
               <User className="h-6 w-6" />
               {strings.appHeader}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="py-4">
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -601,17 +627,19 @@ export default function AIReceptionApp() {
                           {info.name} ({categoryFiles.length})
                         </span>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          categoryFiles.forEach((f) => {
-                            if (f.id) downloadFile(f);
-                          });
-                        }}
-                      >
-                        <Download className="h-4 w-4 " />
-                      </Button>
+                      {category !== "Unclassified" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            categoryFiles.forEach((f) => {
+                              if (f.id) downloadFile(f);
+                            });
+                          }}
+                        >
+                          <Download className="h-4 w-4 " />
+                        </Button>
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -644,13 +672,15 @@ export default function AIReceptionApp() {
                                   toggleSelection(file.uid)
                                 }
                               />
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => downloadFile(file)}
-                              >
-                                <Download className="h-4 w-4 " />
-                              </Button>
+                              {category !== "Unclassified" && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => downloadFile(file)}
+                                >
+                                  <Download className="h-4 w-4 " />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"

@@ -20,6 +20,7 @@ import {
   Moon,
   RefreshCw,
   X,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,10 +44,8 @@ interface UploadedFile {
   id?: string | null;
   uid: string;
   originalName: string;
-  // Stored filename on disk (may be null when not stored)
   newName?: string | null;
   category: string;
-  // Optional metadata
   size?: number | null;
   modified?: number | null;
   status?: string | null;
@@ -71,18 +70,15 @@ const strings = {
   noFiles: "Нет загруженных документов",
 };
 
-// Backend origin helper
-// In development we always point to the API running on localhost:5040.
-// In production we use the current origin (static files served by backend).
 const getBackendOrigin = () =>
   import.meta.env?.DEV ? "http://localhost:5040" : window.location.origin;
 
-// Category configurations
+// Category configurations with Material 3 expressive colors
 const categoryInfo: Record<string, CategoryInfo> = {
   Udostoverenie: {
     name: "Удостоверение",
     icon: CreditCard,
-    color: "rgb(59, 130, 246)",
+    color: "rgb(79, 70, 229)",
   },
   Diplom: {
     name: "Диплом/Аттестат",
@@ -102,7 +98,7 @@ const categoryInfo: Record<string, CategoryInfo> = {
   Unclassified: {
     name: "Неизвестно",
     icon: HelpCircle,
-    color: "rgb(156, 163, 175)",
+    color: "rgb(107, 114, 128)",
   },
   Privivka: {
     name: "Прививочный паспорт",
@@ -131,7 +127,6 @@ const getFileIcon = (filename?: string) => {
   }
 };
 
-// Normalize category keys coming from backend to frontend canonical keys
 const CATEGORY_KEY_MAP: Record<string, string> = {
   udostoverenie: "Udostoverenie",
   diplom: "Diplom",
@@ -142,8 +137,6 @@ const CATEGORY_KEY_MAP: Record<string, string> = {
   medspravka: "MedSpravka",
 };
 
-// Tolerant normalization: strip non-alphanumerics and map to known keys,
-// otherwise fall back to Unclassified.
 const normalizeCategoryKey = (raw?: string | null): string => {
   if (!raw) return "Unclassified";
   const simple = String(raw)
@@ -153,11 +146,9 @@ const normalizeCategoryKey = (raw?: string | null): string => {
   return CATEGORY_KEY_MAP[simple] || "Unclassified";
 };
 
-// Main App Component
 export default function AIReceptionApp() {
   const THEME_KEY = "ai_reception_theme";
 
-  // Initialize isDark synchronously from localStorage or system preference
   const [isDark, setIsDark] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(THEME_KEY);
@@ -180,9 +171,9 @@ export default function AIReceptionApp() {
   const [overlayReject, setOverlayReject] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<UploadedFile | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Apply theme class and persist selection
   useEffect(() => {
     try {
       if (isDark) {
@@ -218,6 +209,7 @@ export default function AIReceptionApp() {
     if (isLoading) return;
 
     setIsLoading(true);
+    setUploadSuccess(false);
 
     const formData = new FormData();
     fileList.forEach((file) => formData.append("files", file));
@@ -234,17 +226,13 @@ export default function AIReceptionApp() {
       if (!response.ok) {
         const text = await response.text().catch(() => "");
         console.error("Upload failed, status:", response.status, text);
-        // small UX hint: briefly show overlayReject to indicate failure
         setOverlayReject(true);
         setTimeout(() => setOverlayReject(false), 1200);
         return;
       }
 
-      // Parse upload response (contains processed entries including unclassified)
       const uploadResult = await response.json().catch(() => []);
 
-      // Also fetch persisted files from the server so we show both saved and
-      // just-processed (but not saved) files. Merge by uid to avoid dups.
       const filesUrl = `${getBackendOrigin()}/files`;
       const filesResponse = await fetch(filesUrl).catch(() => null);
       let persisted: UploadedFile[] = [];
@@ -253,10 +241,7 @@ export default function AIReceptionApp() {
       }
 
       const merged: UploadedFile[] = [
-        // uploadResult first so recently processed (including unclassified)
-        // are visible immediately
         ...(Array.isArray(uploadResult) ? uploadResult : []),
-        // then persisted ones that don't duplicate the same uid
         ...persisted.filter(
           (p) =>
             !Array.isArray(uploadResult) ||
@@ -265,6 +250,8 @@ export default function AIReceptionApp() {
       ];
 
       setFiles(merged as UploadedFile[]);
+      setUploadSuccess(true);
+      setTimeout(() => setUploadSuccess(false), 3000);
     } catch (error) {
       console.error("Upload failed:", error);
       setOverlayReject(true);
@@ -362,7 +349,6 @@ export default function AIReceptionApp() {
     a.target = "_blank";
     a.rel = "noreferrer";
     a.download = file.newName || file.originalName;
-    // Some browsers require the anchor to be in DOM
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -419,7 +405,6 @@ export default function AIReceptionApp() {
   };
 
   const groupedFiles = files.reduce((acc, file) => {
-    // Normalize category using helper to map backend variations to canonical keys
     const categoryKey = normalizeCategoryKey(file.category);
 
     if (!acc[categoryKey]) {
@@ -439,21 +424,19 @@ export default function AIReceptionApp() {
       <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            {/* Left: Logo */}
             <div className="flex items-center">
-              <a href="#" aria-label="Home" className="block">
+              <a href="#" aria-label="Home" className="block group">
                 <img
                   src={isDark ? "/logo_light.png" : "/logo_dark.png"}
                   alt="Logo"
-                  className="h-10 w-fit object-contain"
+                  className="h-12 w-fit object-contain transition-transform duration-300 group-hover:scale-105"
                 />
               </a>
             </div>
 
-            {/* Center: App Title */}
             <div className="flex-1 flex items-center justify-center">
               <h1
-                className={`text-lg sm:text-xl font-bold ${
+                className={`text-xl sm:text-2xl font-bold ${
                   isDark ? "text-foreground" : "text-tou"
                 }`}
               >
@@ -461,17 +444,16 @@ export default function AIReceptionApp() {
               </h1>
             </div>
 
-            {/* Right: Theme switcher */}
             <div className="flex items-center justify-end">
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setIsDark(!isDark)}
-                className="rounded-full"
+                className="rounded-full h-11 w-11 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:scale-105"
                 aria-label="Toggle theme"
               >
                 {isDark ? (
-                  <Sun className="h-5 w-5" />
+                  <Sun className="h-5 w-5 text-amber-500" />
                 ) : (
                   <Moon className="h-5 w-5 text-tou" />
                 )}
@@ -481,8 +463,8 @@ export default function AIReceptionApp() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8">
-        <Card className="mb-6">
+      <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        <Card className="overflow-hidden">
           <CardHeader className="py-4">
             <CardTitle className="flex items-center gap-3 text-foreground">
               <User className="h-6 w-6" />
@@ -522,12 +504,12 @@ export default function AIReceptionApp() {
                 >
                   {isLoading ? (
                     <>
-                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      <RefreshCw className="mr-2 h-5 w-5 animate-spin" />
                       {strings.uploading}
                     </>
                   ) : (
                     <>
-                      <CloudUpload className="mr-2 h-4 w-4" />
+                      <CloudUpload className="mr-2 h-5 w-5" />
                       {strings.uploadBtn}
                     </>
                   )}
@@ -542,23 +524,39 @@ export default function AIReceptionApp() {
                 </Button>
               </div>
 
-              {isLoading && <Progress value={undefined} className="w-full" />}
+              {isLoading && (
+                <Progress
+                  value={undefined}
+                  className="w-full h-2 rounded-full"
+                />
+              )}
+
+              {uploadSuccess && (
+                <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-950/30 border-2 border-green-200 dark:border-green-800 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-500">
+                  <div className="p-2 rounded-xl bg-green-500 shadow-lg">
+                    <Check className="h-5 w-5 text-white" />
+                  </div>
+                  <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                    {strings.uploadSuccess}
+                  </p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
 
         <Card
-          className="mb-6 cursor-pointer hover:shadow-sm transition-shadow"
+          className="cursor-pointer hover:shadow-2xl transition-all duration-300 border-2 border-dashed overflow-hidden hover:scale-[1.01] "
           onClick={pickFiles}
         >
           <CardContent className="py-12">
             <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <CloudUpload className="h-12 w-12" />
+              <CloudUpload className="h-14 w-14" />
               <div>
-                <p className="text-lg font-medium text-foreground">
+                <p className="text-xl font-bold text-foreground">
                   Перетащите или нажмите, чтобы выбрать файлы
                 </p>
-                <p className="text-sm text-muted-foreground mt-2">
+                <p className="text-sm text-muted-foreground mt-3 font-medium">
                   Поддерживаемые форматы: PDF, JPG, PNG
                 </p>
               </div>
@@ -569,8 +567,9 @@ export default function AIReceptionApp() {
                   e.stopPropagation();
                   pickFiles();
                 }}
+                className="hover:scale-103 transition-all duration-300 shadow-md hover:shadow-lg"
               >
-                <FileUp className="mr-2 h-4 w-4" />
+                <FileUp className="mr-2 h-5 w-5" />
                 Выбрать файлы
               </Button>
             </div>
@@ -578,15 +577,15 @@ export default function AIReceptionApp() {
         </Card>
 
         {files.length === 0 ? (
-          <Card>
+          <Card className="overflow-hidden">
             <CardContent className="py-16">
               <div className="flex flex-col items-center justify-center text-center space-y-4">
-                <FolderOpen className="h-14 w-14 " />
+                <FolderOpen className="h-14 w-14" />
                 <div>
-                  <p className="text-lg font-medium text-foreground">
+                  <p className="text-xl font-bold text-foreground">
                     {strings.noFiles}
                   </p>
-                  <p className="text-sm text-muted-foreground mt-2">
+                  <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
                     Заполните форму и загрузите документы для автоматической
                     классификации.
                   </p>
@@ -596,19 +595,24 @@ export default function AIReceptionApp() {
           </Card>
         ) : (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 p-4">
               <div className="flex items-center gap-3">
                 <Checkbox
                   checked={selected.size === files.length && files.length > 0}
                   onCheckedChange={toggleSelectAll}
                 />
-                <span className="font-semibold text-foreground">
+                <span className="font-bold text-lg text-foreground">
                   Загруженные документы ({files.length})
                 </span>
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" size="sm" onClick={downloadAll}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={downloadAll}
+                  className="hover:scale-103 transition-all duration-300"
+                >
                   <Download className="mr-2 h-4 w-4" />
                   Скачать всё
                 </Button>
@@ -621,6 +625,7 @@ export default function AIReceptionApp() {
                       setDeleteDialogOpen(true);
                     }
                   }}
+                  className="hover:scale-103 transition-all duration-300 disabled:hover:scale-100"
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Удалить
@@ -637,14 +642,17 @@ export default function AIReceptionApp() {
               const Icon = info.icon;
 
               return (
-                <Card key={category}>
+                <Card
+                  key={category}
+                  className="overflow-hidden shadow-xl hover:shadow-2xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-3"
+                >
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-full bg-muted">
                           <Icon className="h-5 w-5 text-foreground" />
                         </div>
-                        <span className="font-semibold text-foreground">
+                        <span className="font-semibold text-lg text-foreground">
                           {info.name} ({categoryFiles.length})
                         </span>
                       </div>
@@ -657,8 +665,9 @@ export default function AIReceptionApp() {
                               if (f.id) downloadFile(f);
                             });
                           }}
+                          className="hover:scale-105 transition-all duration-300"
                         >
-                          <Download className="h-4 w-4 " />
+                          <Download className="h-5 w-5" />
                         </Button>
                       )}
                     </div>
@@ -669,18 +678,20 @@ export default function AIReceptionApp() {
                         return (
                           <div
                             key={file.uid}
-                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50"
+                            className="flex items-center gap-3 p-3 rounded-xl hover:bg-muted/50"
                           >
-                            <div className="p-2 rounded-lg bg-muted">
+                            <div
+                              className={`p-2 rounded-lg shadow-md bg-muted`}
+                            >
                               <FileIcon className="h-5 w-5 text-foreground" />
                             </div>
 
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm truncate text-foreground">
+                              <p className="font-semibold text-sm truncate text-foreground">
                                 {file.originalName}
                               </p>
                               {file.newName && (
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-xs text-muted-foreground mt-1 font-medium">
                                   Сохранено как {file.newName}
                                 </p>
                               )}
@@ -698,8 +709,9 @@ export default function AIReceptionApp() {
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => downloadFile(file)}
+                                  className="hover:scale-105 transition-all duration-300"
                                 >
-                                  <Download className="h-4 w-4 " />
+                                  <Download className="h-4 w-4" />
                                 </Button>
                               )}
                               <Button
@@ -709,6 +721,7 @@ export default function AIReceptionApp() {
                                   setFileToDelete(file);
                                   setDeleteDialogOpen(true);
                                 }}
+                                className="hover:scale-105 transition-all duration-300 hover:text-red-600 h-10 w-10"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>

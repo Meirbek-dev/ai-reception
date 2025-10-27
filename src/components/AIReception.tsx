@@ -133,23 +133,11 @@ const getFileIcon = (filename?: string) => {
   }
 };
 
-const CATEGORY_KEY_MAP: Record<string, string> = {
-  udostoverenie: "Udostoverenie",
-  diplom: "Diplom",
-  ent: "ENT",
-  lgota: "Lgota",
-  unclassified: "Unclassified",
-  privivka: "Privivka",
-  medspravka: "MedSpravka",
-};
-
+// The backend now emits canonical category values (e.g. "Udostoverenie", "Diplom", "ENT").
+// Use them directly — only default to "Unclassified" when missing.
 const normalizeCategoryKey = (raw?: string | null): string => {
   if (!raw) return "Unclassified";
-  const simple = String(raw)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-  return CATEGORY_KEY_MAP[simple] || "Unclassified";
+  return String(raw).trim();
 };
 
 export default function AIReceptionApp() {
@@ -264,6 +252,12 @@ export default function AIReceptionApp() {
   };
 
   const handleDrop = (acceptedFiles: File[], fileRejections: any[]) => {
+    // If user opened file picker and then cancelled, acceptedFiles will be empty.
+    // Guard against sending an upload request with no files which causes 422 from backend.
+    if (!acceptedFiles || acceptedFiles.length === 0) {
+      return;
+    }
+
     if (fileRejections && fileRejections.length > 0) {
       const message = fileRejections?.[0]?.errors?.[0]?.message;
       try {
@@ -424,14 +418,14 @@ export default function AIReceptionApp() {
                 <img
                   src={isDark ? "/logo_light.png" : "/logo_dark.png"}
                   alt="Logo"
-                  className="h-12 w-fit object-contain transition-transform duration-300 group-hover:scale-105"
+                  className="h-14 w-fit object-contain transition-transform duration-300 group-hover:scale-105"
                 />
               </a>
             </div>
 
             <div className="flex-1 flex items-center justify-center">
               <h1
-                className={`text-xl sm:text-2xl font-bold ${
+                className={`text-xl sm:text-2xl font-semibold tracking-tight ${
                   isDark ? "text-foreground" : "text-tou"
                 }`}
               >
@@ -444,7 +438,7 @@ export default function AIReceptionApp() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setIsDark(!isDark)}
-                className="rounded-full h-11 w-11 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:scale-105"
+                className="rounded-full h-12 w-12 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:scale-105 shadow-none"
                 aria-label="Toggle theme"
               >
                 {isDark ? (
@@ -459,14 +453,14 @@ export default function AIReceptionApp() {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        <Card className="overflow-hidden">
-          <CardHeader className="py-4">
+        <Card className="overflow-hidden shadow-md">
+          <CardHeader className="py-5 px-4">
             <CardTitle className="flex items-center gap-3 text-foreground">
               <User className="h-6 w-6" />
               {strings.appHeader}
             </CardTitle>
           </CardHeader>
-          <CardContent className="py-4">
+          <CardContent className="py-4 px-4">
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -512,7 +506,7 @@ export default function AIReceptionApp() {
                 <Button
                   variant="outline"
                   onClick={reset}
-                  className="flex-none whitespace-nowrap"
+                  className="flex-none whitespace-nowrap px-4 py-2"
                 >
                   <RefreshCw className="mr-2 h-4 w-4" />
                   Новый абитуриент
@@ -534,10 +528,10 @@ export default function AIReceptionApp() {
           maxFiles={12}
           onDrop={handleDrop}
           disabled={!isFormValid() || isLoading}
-          className="cursor-pointer hover:shadow-2xl transition-all duration-300 border-2 border-dashed overflow-hidden hover:scale-[1.01]"
+          className="cursor-pointer transition-all duration-300 border-2 border-dashed overflow-hidden hover:scale-[1.01] shadow-sm hover:shadow-lg rounded-xl p-1"
         >
           <DropzoneEmptyState>
-            <CardContent className="py-12">
+            <CardContent className="py-12 px-8">
               <div className="flex flex-col items-center justify-center text-center space-y-4">
                 <CloudUpload className="h-14 w-14" />
                 <div>
@@ -555,7 +549,7 @@ export default function AIReceptionApp() {
                     e.stopPropagation();
                     pickFiles();
                   }}
-                  className="hover:scale-103 transition-all duration-300 shadow-md hover:shadow-lg"
+                  className="hover:scale-103 transition-all duration-300 shadow-sm hover:shadow-md px-4 py-2"
                 >
                   <FileUp className="mr-2 h-5 w-5" />
                   Выбрать файлы
@@ -568,7 +562,7 @@ export default function AIReceptionApp() {
 
         {files.length === 0 ? (
           <Card className="overflow-hidden">
-            <CardContent className="py-16">
+            <CardContent className="py-16 px-8">
               <div className="flex flex-col items-center justify-center text-center space-y-4">
                 <FolderOpen className="h-14 w-14" />
                 <div>
@@ -601,7 +595,7 @@ export default function AIReceptionApp() {
                   variant="secondary"
                   size="sm"
                   onClick={downloadAll}
-                  className="hover:scale-103 transition-all duration-300"
+                  className="hover:scale-103 transition-all duration-300 px-3 py-1 shadow-sm"
                 >
                   <Download className="mr-2 h-4 w-4" />
                   Скачать всё
@@ -615,7 +609,7 @@ export default function AIReceptionApp() {
                       setDeleteDialogOpen(true);
                     }
                   }}
-                  className="hover:scale-103 transition-all duration-300 disabled:hover:scale-100"
+                  className="hover:scale-103 transition-all duration-300 disabled:hover:scale-100 px-3 py-1 shadow-sm"
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Удалить
@@ -634,7 +628,7 @@ export default function AIReceptionApp() {
               return (
                 <Card
                   key={category}
-                  className="overflow-hidden shadow-xl hover:shadow-2xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-3"
+                  className="overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-3 rounded-lg"
                 >
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-4">
@@ -665,16 +659,16 @@ export default function AIReceptionApp() {
                       )}
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {categoryFiles.map((file) => {
                         const FileIcon = getFileIcon(file.originalName);
                         return (
                           <div
                             key={file.uid}
-                            className="flex items-center gap-3 p-3 rounded-xl hover:bg-muted/50"
+                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 hover:shadow-sm transition-shadow"
                           >
                             <div
-                              className={`p-2 rounded-lg shadow-md`}
+                              className={`p-2 rounded-lg shadow-sm`}
                               style={{ background: info.color }}
                             >
                               <FileIcon className="h-5 w-5 text-white" />

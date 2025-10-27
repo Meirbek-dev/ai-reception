@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -418,38 +419,54 @@ def classify_text(text: str) -> DocumentCategory:
 
 def parse_stored_filename(filename: str) -> dict[str, str] | None:
     """Parse metadata from stored filename format:
-    {category}__{name}_{lastname}__{original}_{uuid}_{idx}{ext}
+    Expected stored filename format (strict):
+    {CategoryValue}__{name}_{lastname}__{original}_{uuid}_{idx}{ext}
 
-    Returns a dict with keys: id, category, name, original
+    The function returns a dict with canonical keys: id, category, name, original.
+    Only filenames that contain a UUID in the expected position and a recognizable
+    category will be returned. This removes legacy/lenient parsing and forces
+    the backend to surface canonical category values to the frontend.
     """
     parts = filename.split("__")
-    # Expect at least 3 segments: category, name_lastname, rest
+    # Require the exact three-segment structure we produce when saving files.
     if len(parts) < 3:
         return None
 
-    category = parts[0]
+    raw_category = parts[0]
     name = parts[1]
 
-    # The remainder may contain original, uuid and index joined by underscores
+    # The remainder may contain original name, uuid and index joined by underscores
     remainder = "__".join(parts[2:])
     stem = Path(remainder).stem
 
-    # Try to split off the uuid (36-char UUID) which we expect near the end
-    # Format we created: {original}_{uuid}_{idx}
-    rev_parts = stem.rsplit("_", 2)
-    if len(rev_parts) == 3:
-        original, maybe_uuid, _ = rev_parts
-        file_id = maybe_uuid if len(maybe_uuid) == 36 else ""
-    elif len(rev_parts) == 2:
-        original, maybe_uuid = rev_parts
-        file_id = maybe_uuid if len(maybe_uuid) == 36 else ""
-    else:
-        original = stem
-        file_id = ""
+    # Find a UUID anywhere in the stem; we expect it to be the unique id we added.
+    uuid_re = re.compile(
+        r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+    )
+    m = uuid_re.search(stem)
+    if not m:
+        # Do not attempt to be lenient — skip legacy/unknown filenames
+        return None
+
+    file_id = m.group(1)
+    original = stem[: m.start()].rstrip("_")
+
+    # Normalize category to one of the DocumentCategory values. Match by value
+    # (case-insensitive) to be resilient, but always return the canonical
+    # enum.value string expected by the frontend.
+    canonical = None
+    for cat in DocumentCategory:
+        if cat.value.lower() == raw_category.lower():
+            canonical = cat.value
+            break
+
+    if canonical is None:
+        # Unknown category — skip this file to avoid exposing legacy keys
+        return None
 
     return {
         "id": file_id,
-        "category": category,
+        "category": canonical,
         "name": name,
         "original": original,
     }

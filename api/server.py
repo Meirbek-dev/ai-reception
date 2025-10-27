@@ -899,12 +899,21 @@ def _list_files_sync(
         if not metadata:
             continue
 
-        # Apply filters
+        # Apply filters - for privacy, require both name and lastname to be
+        # provided and match the stored metadata. If name/lastname are not
+        # provided, do not return any files to avoid exposing listings.
+        if not name or not lastname:
+            continue
+
+        sanitized_name = sanitize_name(name)
+        sanitized_lastname = sanitize_name(lastname)
+
+        # The stored `metadata["name"]` is expected to contain the
+        # sanitized name and lastname (name_lastname). Require both to match.
+        if sanitized_name not in metadata["name"] or sanitized_lastname not in metadata["name"]:
+            continue
+
         if category and metadata["category"] != category:
-            continue
-        if name and sanitize_name(name) not in metadata["name"]:
-            continue
-        if lastname and sanitize_name(lastname) not in metadata["name"]:
             continue
 
         try:
@@ -938,13 +947,18 @@ async def list_files(
 
 
 @app.get("/files/{file_id}")
-async def download_file(file_id: str) -> FileResponse:
-    """Download a file by its ID"""
+async def download_file(
+    file_id: str,
+    name: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    lastname: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+) -> FileResponse:
+    """Download a file by its ID. Require name and lastname to match stored file metadata."""
     if not settings.upload_folder.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
     # Find file with matching parsed ID
     target_file = None
+    target_metadata = None
     for file_path in settings.upload_folder.iterdir():
         if not file_path.is_file():
             continue
@@ -953,10 +967,24 @@ async def download_file(file_id: str) -> FileResponse:
             continue
         if metadata.get("id") == file_id:
             target_file = file_path
+            target_metadata = metadata
             break
 
     if not target_file or not target_file.exists():
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Require name and lastname for privacy
+    if not name or not lastname:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    sanitized_name = sanitize_name(name)
+    sanitized_lastname = sanitize_name(lastname)
+
+    metadata_name = (target_metadata or {}).get("name", "").lower()
+    expected = f"{sanitized_name}_{sanitized_lastname}".lower()
+    if metadata_name != expected:
+        # Don't reveal whether the file exists; just deny access
+        raise HTTPException(status_code=403, detail="Access denied")
 
     # Security check: ensure file is within upload folder
     try:
@@ -1039,12 +1067,16 @@ async def download_zip(
 
 
 @app.delete("/files/{file_id}", response_model=FileDeleteResponse)
-async def delete_file(file_id: str) -> FileDeleteResponse:
-    """Delete a file by its ID"""
-    return await _delete_file_by_id(file_id)
+async def delete_file(
+    file_id: str,
+    name: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    lastname: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+) -> FileDeleteResponse:
+    """Delete a file by its ID. Require name and lastname to match stored file metadata."""
+    return await _delete_file_by_id(file_id, name, lastname)
 
 
-async def _delete_file_by_id(file_id: str) -> FileDeleteResponse:
+async def _delete_file_by_id(file_id: str, name: str | None, lastname: str | None) -> FileDeleteResponse:
     """Helper to delete stored file by parsed UUID-like id."""
     if not settings.upload_folder.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -1062,6 +1094,16 @@ async def _delete_file_by_id(file_id: str) -> FileDeleteResponse:
 
     if not target_file:
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Require name and lastname for privacy; validate match
+    if not name or not lastname:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    parsed_meta = parse_stored_filename(target_file.name) or {}
+    metadata_name = parsed_meta.get("name", "").lower()
+    expected = f"{sanitize_name(name)}_{sanitize_name(lastname)}".lower()
+    if metadata_name != expected:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     filename = target_file.name
 

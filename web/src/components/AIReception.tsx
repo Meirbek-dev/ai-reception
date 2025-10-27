@@ -222,7 +222,9 @@ export default function AIReceptionApp() {
         summary?: Record<string, number>;
       };
 
-      const filesUrl = `${getBackendOrigin()}/files`;
+      const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
+        name
+      )}&lastname=${encodeURIComponent(lastName)}`;
       const filesResponse = await fetch(filesUrl).catch(() => null);
       let persisted: UploadedFile[] = [];
       if (filesResponse && filesResponse.ok) {
@@ -310,7 +312,11 @@ export default function AIReceptionApp() {
     }
 
     try {
-      const url = `${getBackendOrigin()}/files/${encodeURIComponent(file.id)}`;
+      const url = `${getBackendOrigin()}/files/${encodeURIComponent(
+        file.id
+      )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
+        lastName
+      )}`;
       const response = await fetch(url, { method: "DELETE" });
 
       if (!response.ok) {
@@ -325,7 +331,9 @@ export default function AIReceptionApp() {
         return;
       }
 
-      const filesUrl = `${getBackendOrigin()}/files`;
+      const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
+        name
+      )}&lastname=${encodeURIComponent(lastName)}`;
       const filesResponse = await fetch(filesUrl);
       if (!filesResponse.ok) {
         console.error(
@@ -344,7 +352,11 @@ export default function AIReceptionApp() {
 
   const downloadFile = (file: UploadedFile) => {
     if (!file.id) return;
-    const url = `${getBackendOrigin()}/files/${encodeURIComponent(file.id)}`;
+    const url = `${getBackendOrigin()}/files/${encodeURIComponent(
+      file.id
+    )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
+      lastName
+    )}`;
     const a = document.createElement("a");
     a.href = url;
     a.target = "_blank";

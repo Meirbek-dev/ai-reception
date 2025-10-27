@@ -84,5 +84,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:5040/healthz', timeout=3); sys.exit(0 if r.getcode()==200 else 1)"
 
 # Run with uvicorn (non-root user) to serve the FastAPI app
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5040", "--workers", "2"]
+ENV UVICORN_WORKERS=2
+CMD uvicorn server:app --host 0.0.0.0 --port 5040 --workers ${UVICORN_WORKERS}
 

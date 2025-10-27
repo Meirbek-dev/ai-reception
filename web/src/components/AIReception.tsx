@@ -560,6 +560,28 @@ export default function AIReceptionApp() {
                   <p className="text-sm text-muted-foreground mt-3 font-medium">
                     Поддерживаемые форматы: PDF, JPG, PNG
                   </p>
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
+                    {Object.entries(categoryInfo)
+                      .filter(([key]) => key !== "Unclassified")
+                      .map(([key, info]) => {
+                        const IconSmall = info.icon;
+                        return (
+                          <div
+                            key={key}
+                            className="flex items-center gap-2 px-2 py-1 rounded-full bg-muted/20"
+                            style={{ opacity: 0.95 }}
+                          >
+                            <div
+                              className="p-1 rounded-full"
+                              style={{ background: info.color }}
+                            >
+                              <IconSmall className="h-3 w-3 text-white" />
+                            </div>
+                            <span className="text-xs">{info.name}</span>
+                          </div>
+                        );
+                      })}
+                  </div>
                 </div>
                 <Button
                   variant="secondary"

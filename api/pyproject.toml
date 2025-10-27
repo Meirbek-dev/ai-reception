@@ -3,7 +3,7 @@ name = "ai-reception"
 version = "0.1.0"
 description = "AI Reception"
 readme = "README.md"
-requires-python = ">=3.13.7,<3.14.0"
+requires-python = ">=3.14.0"
 dependencies = [
     "aiofiles>=25.1.0",
     "fastapi[standard-no-fastapi-cloud-cli]>=0.120.0",

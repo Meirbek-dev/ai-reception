@@ -13,7 +13,7 @@ import uuid
 import zipfile
 from collections import defaultdict, deque
 from collections.abc import AsyncGenerator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
@@ -163,7 +163,6 @@ ALLOWED_MIMETYPES = frozenset(
         "image/jpeg",
         "image/jpg",
         "image/png",
-        "image/pjpeg",
     }
 )
 
@@ -346,6 +345,27 @@ def extract_text(file_bytes: bytes, ext: str) -> str:
         return ""
 
 
+def extract_text_from_path(path: str, ext: str) -> str:
+    """Worker-friendly wrapper: read file bytes from disk and extract text.
+
+    This avoids pickling large byte buffers when sending work to a
+    ProcessPoolExecutor: we send the filename and let the worker read it.
+    """
+    try:
+        p = Path(path)
+        with p.open("rb") as f:
+            data = f.read()
+        return extract_text(data, ext)
+    except Exception:
+        # Use a plain print here because child processes may have different
+        # logging config; still call logger for consistency.
+        try:
+            logger.exception("Failed to extract text from path %s", path)
+        except Exception:
+            print(f"Failed to extract text from path {path}")
+        return ""
+
+
 def _extract_text_from_pdf(file_bytes: bytes) -> str:
     """Extract text from PDF bytes"""
     try:
@@ -387,33 +407,41 @@ def _extract_text_from_image_bytes(file_bytes: bytes) -> str:
         return ""
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=256)
 def classify_text(text: str) -> DocumentCategory:
-    """Classify text using fuzzy matching (rapidfuzz) with caching.
+    """Classify text using a fast exact containment check first, then
+    a fuzzy-match fallback. Caching is enabled to avoid repeated work for
+    identical OCR results.
 
-    Returns UNCLASSIFIED when no keyword reaches the similarity threshold.
+    Returns DocumentCategory.UNCLASSIFIED when no keyword matches.
     """
     if not text:
         return DocumentCategory.UNCLASSIFIED
 
-    text = text.strip()
-    best_category = DocumentCategory.UNCLASSIFIED
-    best_score = 0.0
+    lower_text = text.strip().lower()
 
+    # Fast exact containment check
     for category, keywords in CATEGORY_KEYWORDS.items():
         for kw in keywords:
+            if kw and kw.lower() in lower_text:
+                return category
+
+    # Fuzzy fallback — compute best score and category
+    best_category = DocumentCategory.UNCLASSIFIED
+    best_score = 0
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if not kw:
+                continue
             try:
-                score = fuzz.token_set_ratio(kw.lower(), text.lower())
+                score = fuzz.token_set_ratio(kw.lower(), lower_text)
             except Exception:
-                score = 0.0
+                score = 0
             if score > best_score:
                 best_score = score
                 best_category = category
 
-    if best_score < 50:
-        return DocumentCategory.UNCLASSIFIED
-
-    return best_category
+    return best_category if best_score >= 60 else DocumentCategory.UNCLASSIFIED
 
 
 def parse_stored_filename(filename: str) -> dict[str, str] | None:
@@ -499,10 +527,14 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
     """Save uploaded file to temporary location with validation"""
     if not upload_file.filename:
         logger.warning("Upload file has no filename")
+        with suppress(Exception):
+            await upload_file.close()
         return None
 
     if not validate_file_extension(upload_file.filename):
         logger.warning("Rejected extension: %s", upload_file.filename)
+        with suppress(Exception):
+            await upload_file.close()
         return None
 
     if not validate_mimetype(upload_file.content_type):
@@ -511,6 +543,8 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
             upload_file.content_type,
             upload_file.filename,
         )
+        with suppress(Exception):
+            await upload_file.close()
         return None
 
     fd, tmp_path_str = tempfile.mkstemp(
@@ -548,6 +582,8 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
         ) from exc
     else:
         # success
+        with suppress(Exception):
+            await upload_file.close()
         return (upload_file.filename, tmp_path)
 
 
@@ -555,20 +591,23 @@ async def process_single_file(
     file_data: tuple[str, Path],
     name: str,
     lastname: str,
-    executor: ThreadPoolExecutor,
+    executor: ProcessPoolExecutor,
 ) -> ProcessedFile | None:
     """Process a single uploaded file: OCR, classify, and store"""
     original_name, tmp_path = file_data
     ext = Path(original_name).suffix.lower()
 
     try:
-        # Read file
+        # Read file (we keep bytes locally for saving later)
         async with aiofiles.open(tmp_path, "rb") as afp:
             file_bytes = await afp.read()
 
-        # Extract text in thread pool
-        loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(executor, extract_text, file_bytes, ext)
+        # Extract text in worker process by passing the filename (avoids
+        # pickling the large bytes buffer across IPC). Submit the job
+        # explicitly to the ProcessPoolExecutor and wrap the returned
+        # concurrent.futures.Future into an asyncio Future for awaiting.
+        cf_future = executor.submit(extract_text_from_path, str(tmp_path), ext)
+        text = await asyncio.wrap_future(cf_future)
 
         # Classify
         category = classify_text(text)
@@ -619,10 +658,9 @@ async def process_single_file(
     except Exception:
         logger.exception("Failed to process file: %s", original_name)
         return None
-
-    finally:
-        with suppress(Exception):
-            tmp_path.unlink(missing_ok=True)
+    # NOTE: do not remove the temp file here — the upload endpoint schedules
+    # background cleanup for all temp files to avoid races with worker
+    # processes which read files by path.
 
 
 async def cleanup_old_files() -> int:
@@ -664,7 +702,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     settings.upload_folder.mkdir(parents=True, exist_ok=True)
 
     app.state.rate_limiter = RateLimiter(settings.rate_limit_per_minute)
-    app.state.executor = ThreadPoolExecutor(max_workers=settings.max_workers)
+    # For CPU-bound OCR work prefer processes. Cap to number of CPUs.
+    cpu_count = os.cpu_count() or 1
+    max_workers = max(1, min(settings.max_workers, cpu_count))
+    app.state.executor = ProcessPoolExecutor(max_workers=max_workers)
 
     # Background cleanup task
     async def cleanup_loop() -> None:
@@ -771,15 +812,25 @@ async def upload_files(
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Filter successful results
-        processed = [r for r in results if isinstance(r, ProcessedFile)]
+        # Filter successful results (ProcessedFile instances)
+        processed: list[ProcessedFile] = [
+            r for r in results if isinstance(r, ProcessedFile)
+        ]
 
-        # Log errors
-        errors = [r for r in results if isinstance(r, Exception)]
-        if errors:
-            logger.error("Processing errors: %d files failed", len(errors))
+        # Count failures: explicit exceptions or None returned from workers
+        exceptions = [r for r in results if isinstance(r, Exception)]
+        none_count = sum(1 for r in results if r is None)
+        failed_count = len(exceptions) + none_count
+        if failed_count:
+            logger.error(
+                "Processing errors: %d files failed "
+                "(%d exceptions, %d internal failures)",
+                failed_count,
+                len(exceptions),
+                none_count,
+            )
 
-        # Convert to client format and return
+        # Convert to client format and return successful items only
         return [processed_file_to_client(p) for p in processed]
 
     finally:
@@ -1010,11 +1061,12 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "5040"))
     host = os.getenv("HOST", "0.0.0.0")  # noqa: S104
+    fastapi_env = os.getenv("FASTAPI_ENV", os.getenv("ENVIRONMENT", "production"))
 
     uvicorn.run(
         "server:app",
         host=host,
         port=port,
-        reload=os.getenv("ENVIRONMENT", "production") != "production",
+        reload=fastapi_env != "production",
         log_level=settings.log_level.lower(),
     )

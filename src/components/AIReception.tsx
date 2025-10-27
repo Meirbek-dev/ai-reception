@@ -37,6 +37,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import {
+  Dropzone,
+  DropzoneContent,
+  DropzoneEmptyState,
+  type DropzoneHandle,
+} from "@/components/kibo-ui/dropzone";
 
 // Types
 interface UploadedFile {
@@ -169,7 +175,7 @@ export default function AIReceptionApp() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<UploadedFile | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropzoneRef = useRef<DropzoneHandle | null>(null);
 
   useEffect(() => {
     try {
@@ -191,16 +197,6 @@ export default function AIReceptionApp() {
     const noDigits = /^[^0-9]+$/;
     return noDigits.test(trimmedName) && noDigits.test(trimmedLast);
   }, [name, lastName]);
-
-  const validateFiles = (fileList: FileList | File[]) => {
-    const allowed = new Set(["pdf", "jpg", "jpeg", "png"]);
-    const filesArray = Array.from(fileList);
-    const invalid = filesArray.filter((f) => {
-      const ext = f.name.toLowerCase().split(".").pop() || "";
-      return !allowed.has(ext);
-    });
-    return { valid: invalid.length === 0, invalid };
-  };
 
   const uploadFiles = async (fileList: File[]) => {
     if (isLoading) return;
@@ -267,46 +263,14 @@ export default function AIReceptionApp() {
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    const { valid } = validateFiles(droppedFiles);
-
-    if (!valid) {
+  const handleDrop = (acceptedFiles: File[], fileRejections: any[]) => {
+    if (fileRejections && fileRejections.length > 0) {
+      const message = fileRejections?.[0]?.errors?.[0]?.message;
       try {
-        toast.error(strings.invalidFileType);
+        toast.error(message || strings.invalidFileType);
       } catch (e) {
         /* ignore */
       }
-      return;
-    }
-
-    if (isFormValid()) {
-      uploadFiles(droppedFiles);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-
-    const selectedFiles = Array.from(e.target.files);
-    const { valid } = validateFiles(selectedFiles);
-
-    if (!valid) {
-      try {
-        toast.error(strings.invalidFileType);
-      } catch (e) {
-        /* ignore */
-      }
-      return;
-    }
-
-    uploadFiles(selectedFiles);
-  };
-
-  const pickFiles = () => {
-    if (isLoading) {
       return;
     }
 
@@ -316,13 +280,30 @@ export default function AIReceptionApp() {
       } catch (e) {
         /* ignore */
       }
+      return;
     }
 
-    fileInputRef.current?.click();
+    uploadFiles(acceptedFiles);
+  };
+
+  const pickFiles = () => {
+    if (isLoading) return;
+    if (!isFormValid()) {
+      try {
+        toast.error(strings.invalidForm);
+      } catch (e) {
+        /* ignore */
+      }
+      return;
+    }
+
+    dropzoneRef.current?.open();
   };
 
   const deleteFile = async (file: UploadedFile) => {
-    if (!file.id) {
+    // If the file has no backend id, or it's classified as Unclassified,
+    // just remove it from UI state without calling the backend.
+    if (!file.id || normalizeCategoryKey(file.category) === "Unclassified") {
       setFiles((prev) => prev.filter((f) => f !== file));
       return;
     }
@@ -332,6 +313,12 @@ export default function AIReceptionApp() {
       const response = await fetch(url, { method: "DELETE" });
 
       if (!response.ok) {
+        // If the file wasn't found on the server, remove it locally to keep UI consistent.
+        if (response.status === 404) {
+          setFiles((prev) => prev.filter((f) => f !== file));
+          return;
+        }
+
         const text = await response.text().catch(() => "");
         console.error("Delete failed, status:", response.status, text);
         return;
@@ -428,10 +415,7 @@ export default function AIReceptionApp() {
   }, {} as Record<string, UploadedFile[]>);
 
   return (
-    <div
-      className="min-h-screen bg-background dark:bg-background transition-colors"
-      onDrop={handleDrop}
-    >
+    <div className="min-h-screen bg-background dark:bg-background transition-colors">
       <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
@@ -545,36 +529,42 @@ export default function AIReceptionApp() {
           </CardContent>
         </Card>
 
-        <Card
-          className="cursor-pointer hover:shadow-2xl transition-all duration-300 border-2 border-dashed overflow-hidden hover:scale-[1.01] "
-          onClick={pickFiles}
+        <Dropzone
+          ref={dropzoneRef}
+          maxFiles={12}
+          onDrop={handleDrop}
+          disabled={!isFormValid() || isLoading}
+          className="cursor-pointer hover:shadow-2xl transition-all duration-300 border-2 border-dashed overflow-hidden hover:scale-[1.01]"
         >
-          <CardContent className="py-12">
-            <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <CloudUpload className="h-14 w-14" />
-              <div>
-                <p className="text-xl font-bold text-foreground">
-                  Перетащите или нажмите, чтобы выбрать файлы
-                </p>
-                <p className="text-sm text-muted-foreground mt-3 font-medium">
-                  Поддерживаемые форматы: PDF, JPG, PNG
-                </p>
+          <DropzoneEmptyState>
+            <CardContent className="py-12">
+              <div className="flex flex-col items-center justify-center text-center space-y-4">
+                <CloudUpload className="h-14 w-14" />
+                <div>
+                  <p className="text-xl font-bold text-foreground">
+                    Перетащите или нажмите, чтобы выбрать файлы
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-3 font-medium">
+                    Поддерживаемые форматы: PDF, JPG, PNG
+                  </p>
+                </div>
+                <Button
+                  variant="secondary"
+                  disabled={!isFormValid() || isLoading}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    pickFiles();
+                  }}
+                  className="hover:scale-103 transition-all duration-300 shadow-md hover:shadow-lg"
+                >
+                  <FileUp className="mr-2 h-5 w-5" />
+                  Выбрать файлы
+                </Button>
               </div>
-              <Button
-                variant="secondary"
-                disabled={!isFormValid() || isLoading}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  pickFiles();
-                }}
-                className="hover:scale-103 transition-all duration-300 shadow-md hover:shadow-lg"
-              >
-                <FileUp className="mr-2 h-5 w-5" />
-                Выбрать файлы
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </DropzoneEmptyState>
+          <DropzoneContent />
+        </Dropzone>
 
         {files.length === 0 ? (
           <Card className="overflow-hidden">
@@ -744,15 +734,6 @@ export default function AIReceptionApp() {
           </div>
         )}
       </main>
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept=".pdf,.jpg,.jpeg,.png"
-        onChange={handleFileSelect}
-        className="hidden"
-      />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>

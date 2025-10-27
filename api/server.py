@@ -20,11 +20,11 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote as _quote
 
 import aiofiles
 import pytesseract
 from fastapi import (
-    BackgroundTasks,
     FastAPI,
     File,
     Form,
@@ -444,58 +444,86 @@ def classify_text(text: str) -> DocumentCategory:
     return best_category if best_score >= 60 else DocumentCategory.UNCLASSIFIED
 
 
-def parse_stored_filename(filename: str) -> dict[str, str] | None:
-    """Parse metadata from stored filename format:
-    Expected stored filename format (strict):
-    {CategoryValue}__{name}_{lastname}__{original}_{uuid}_{idx}{ext}
-
-    The function returns a dict with canonical keys: id, category, name, original.
-    Only filenames that contain a UUID in the expected position and a recognizable
-    category will be returned. This removes legacy/lenient parsing and forces
-    the backend to surface canonical category values to the frontend.
-    """
-    parts = filename.split("__")
-    # Require the exact three-segment structure we produce when saving files.
-    if len(parts) < 3:
-        return None
-
-    raw_category = parts[0]
-    name = parts[1]
-
-    # The remainder may contain original name, uuid and index joined by underscores
-    remainder = "__".join(parts[2:])
-    stem = Path(remainder).stem
-
-    # Find a UUID anywhere in the stem; we expect it to be the unique id we added.
+def _find_uuid_and_pos(stem: str) -> tuple[str | None, int | None]:
+    """Return (uuid, position_in_tokens) or (None, None)"""
     uuid_re = re.compile(
         r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
     )
     m = uuid_re.search(stem)
     if not m:
-        # Do not attempt to be lenient — skip legacy/unknown filenames
-        return None
+        return None, None
 
     file_id = m.group(1)
-    original = stem[: m.start()].rstrip("_")
+    tokens = stem.split("_")
+    try:
+        pos = tokens.index(file_id)
+    except ValueError:
+        pos = None
+        for i, t in enumerate(tokens):
+            if file_id in t:
+                pos = i
+                break
 
-    # Normalize category to one of the DocumentCategory values. Match by value
-    # (case-insensitive) to be resilient, but always return the canonical
-    # enum.value string expected by the frontend.
-    canonical = None
+    return file_id, pos
+
+
+def _canonical_category(token: str) -> str | None:
+    """Return canonical DocumentCategory.value for token or None"""
     for cat in DocumentCategory:
-        if cat.value.lower() == raw_category.lower():
-            canonical = cat.value
-            break
+        if cat.value.lower() == token.lower():
+            return cat.value
+    return None
 
-    if canonical is None:
-        # Unknown category — skip this file to avoid exposing legacy keys
+
+def parse_stored_filename(filename: str) -> dict[str, str] | None:
+    """Parse metadata from stored filename format:
+
+    Expected stored filename format (strict):
+    {name}_{lastname}_{CategoryValue}_{idx}_{uuid}{ext}
+
+    This function extracts the UUID, category, name and a reconstructed
+    original-like value (name_lastname) from the filename. It is intentionally
+    permissive about name/lastname contents but reliably parses the trailing
+    {category}_{idx}_{uuid} suffix.
+    """
+
+    stem = Path(filename).stem
+
+    file_id, uuid_pos = _find_uuid_and_pos(stem)
+    if not file_id or uuid_pos is None:
         return None
+
+    tokens = stem.split("_")
+    # Expect at minimum: name, lastname, category, idx, uuid
+    if len(tokens) < 5:
+        return None
+
+    # tokens before uuid: leading... category, idx
+    if uuid_pos < 3:
+        return None
+
+    category_token = tokens[uuid_pos - 2]
+    idx_token = tokens[uuid_pos - 1]
+
+    leading = tokens[: uuid_pos - 2]
+    if len(leading) < 2:
+        return None
+
+    name_token = leading[0]
+    lastname_token = "_".join(leading[1:])
+
+    canonical = _canonical_category(category_token)
+    if not canonical:
+        return None
+
+    original_like = f"{name_token}_{lastname_token}"
 
     return {
         "id": file_id,
         "category": canonical,
-        "name": name,
-        "original": original,
+        "name": f"{name_token}_{lastname_token}",
+        "original": original_like,
+        "index": idx_token,
     }
 
 
@@ -598,41 +626,36 @@ async def process_single_file(
     ext = Path(original_name).suffix.lower()
 
     try:
-        # Read file (we keep bytes locally for saving later)
+        # Read file bytes FIRST (before any async operations)
         async with aiofiles.open(tmp_path, "rb") as afp:
             file_bytes = await afp.read()
 
-        # Extract text in worker process by passing the filename (avoids
-        # pickling the large bytes buffer across IPC). Submit the job
-        # explicitly to the ProcessPoolExecutor and wrap the returned
-        # concurrent.futures.Future into an asyncio Future for awaiting.
-        cf_future = executor.submit(extract_text_from_path, str(tmp_path), ext)
-        text = await asyncio.wrap_future(cf_future)
+        # Now safe to delete temp file - we have the bytes
+        with suppress(Exception):
+            tmp_path.unlink(missing_ok=True)
 
-        # Classify
+        loop = asyncio.get_event_loop()
+        text = await loop.run_in_executor(executor, extract_text, file_bytes, ext)
+
         category = classify_text(text)
-
-        # Generate unique ID
         file_id = str(uuid.uuid4())
         size = len(file_bytes)
         modified = int(time.time())
 
-        # Save if classified
         filename = ""
         status = "unclassified"
 
         if category != DocumentCategory.UNCLASSIFIED:
-            # Format: {category}__{name}_{lastname}__{original}_{uuid}_{idx}{ext}
-            base_name = (
-                f"{category.value}__"
-                f"{sanitize_name(name)}_{sanitize_name(lastname)}__"
-                f"{sanitize_name(Path(original_name).stem)}"
-            )
+            # New filename format: {name}_{lastname}_{CategoryValue}_{idx}_{uuid}{ext}
+            sanitized_name = sanitize_name(name)
+            sanitized_lastname = sanitize_name(lastname)
 
-            # Find unique filename with uuid postfix and index
             idx = 1
-            while True:
-                candidate = f"{base_name}_{file_id}_{idx}{ext}"
+            while idx <= 100:  # Reasonable limit
+                candidate = (
+                    f"{sanitized_name}_{sanitized_lastname}_"
+                    f"{category.value}_{idx}_{file_id}{ext}"
+                )
                 dest = settings.upload_folder / candidate
                 if not dest.exists():
                     filename = candidate
@@ -641,9 +664,13 @@ async def process_single_file(
                     logger.info("Saved file: %s as %s", original_name, category.value)
                     break
                 idx += 1
-                if idx > 1000:  # Safety limit
-                    logger.error("Too many file collisions for %s", base_name)
-                    break
+            else:
+                logger.error(
+                    "Too many file collisions for %s_%s",
+                    sanitized_name,
+                    sanitized_lastname,
+                )
+                return None
 
         return ProcessedFile(
             id=file_id,
@@ -655,12 +682,18 @@ async def process_single_file(
             status=status,
         )
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to process file: %s", original_name)
-        return None
-    # NOTE: do not remove the temp file here — the upload endpoint schedules
-    # background cleanup for all temp files to avoid races with worker
-    # processes which read files by path.
+        # Return error info instead of None for better error reporting
+        return ProcessedFile(
+            id=str(uuid.uuid4()),
+            original_name=original_name,
+            category="ERROR",
+            filename="",
+            size=0,
+            modified=int(time.time()),
+            status=f"error: {str(exc)[:100]}",
+        )
 
 
 async def cleanup_old_files() -> int:
@@ -768,12 +801,11 @@ async def health_check() -> HealthCheck:
 @app.post("/upload")
 async def upload_files(
     request: Request,
-    background_tasks: BackgroundTasks,
     name: Annotated[str, Form(min_length=1, max_length=100)],
     lastname: Annotated[str, Form(min_length=1, max_length=100)],
     files: Annotated[list[UploadFile], File()],
-) -> list[dict]:
-    """Upload and process multiple files"""
+) -> dict:
+    """Upload and process multiple files with detailed error reporting"""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -783,19 +815,26 @@ async def upload_files(
             detail=f"Too many files (max {settings.max_files_per_upload})",
         )
 
-    # Rate limiting
     client_ip = request.client.host if request.client else "unknown"
     if await request.app.state.rate_limiter.is_limited(client_ip):
         raise HTTPException(
             status_code=429, detail="Rate limit exceeded. Please try again later."
         )
 
-    # Save uploads to temp
     temp_files: list[tuple[str, Path]] = []
+    rejected_files: list[dict] = []
+
     for upload_file in files:
         saved = await save_upload_to_temp(upload_file)
         if saved:
             temp_files.append(saved)
+        else:
+            rejected_files.append(
+                {
+                    "filename": upload_file.filename or "unknown",
+                    "error": "Invalid file type or size",
+                }
+            )
 
     if not temp_files:
         raise HTTPException(
@@ -803,53 +842,50 @@ async def upload_files(
             detail="No valid files uploaded. Check file types and sizes.",
         )
 
-    try:
-        # Process files in parallel
-        executor = request.app.state.executor
-        tasks = [
-            process_single_file(file_data, name, lastname, executor)
-            for file_data in temp_files
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Process files
+    executor = request.app.state.executor
+    tasks = [
+        process_single_file(file_data, name, lastname, executor)
+        for file_data in temp_files
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
 
-        # Filter successful results (ProcessedFile instances)
-        processed: list[ProcessedFile] = [
-            r for r in results if isinstance(r, ProcessedFile)
-        ]
+    # Separate success, unclassified and failures
+    successful: list[dict] = []
+    unclassified: list[dict] = []
+    failed: list[dict] = []
 
-        # Count failures: explicit exceptions or None returned from workers
-        exceptions = [r for r in results if isinstance(r, Exception)]
-        none_count = sum(1 for r in results if r is None)
-        failed_count = len(exceptions) + none_count
-        if failed_count:
-            logger.error(
-                "Processing errors: %d files failed "
-                "(%d exceptions, %d internal failures)",
-                failed_count,
-                len(exceptions),
-                none_count,
-            )
+    for result in results:
+        # skip None results (shouldn't happen but be defensive)
+        if not result:
+            continue
 
-        # Convert to client format and return successful items only
-        return [processed_file_to_client(p) for p in processed]
+        # explicit error status (process_single_file uses "error:..." on failures)
+        if isinstance(result.status, str) and result.status.startswith("error"):
+            failed.append({"filename": result.original_name, "error": result.status})
+        elif result.status == "unclassified":
+            # include unclassified files so clients can review or re-upload
+            unclassified.append(processed_file_to_client(result))
+        else:
+            successful.append(processed_file_to_client(result))
 
-    finally:
-        # Cleanup temp files in background
-        def cleanup_temps() -> None:
-            for _, tmp_path in temp_files:
-                with suppress(Exception):
-                    tmp_path.unlink(missing_ok=True)
+    return {
+        "success": successful,
+        "unclassified": unclassified,
+        "failed": failed + rejected_files,
+        "summary": {
+            "total": len(files),
+            "successful": len(successful),
+            "unclassified": len(unclassified),
+            "failed": len(failed) + len(rejected_files),
+        },
+    }
 
-        background_tasks.add_task(cleanup_temps)
 
-
-@app.get("/files")
-async def list_files(
-    category: Annotated[str | None, Query(description="Filter by category")] = None,
-    name: Annotated[str | None, Query(description="Filter by name")] = None,
-    lastname: Annotated[str | None, Query(description="Filter by lastname")] = None,
+def _list_files_sync(
+    category: str | None, name: str | None, lastname: str | None
 ) -> list[dict]:
-    """List all stored files with optional filtering"""
+    """Synchronous file listing to run in executor"""
     if not settings.upload_folder.exists():
         return []
 
@@ -859,7 +895,6 @@ async def list_files(
         if not file_path.is_file():
             continue
 
-        # Parse filename
         metadata = parse_stored_filename(file_path.name)
         if not metadata:
             continue
@@ -888,8 +923,18 @@ async def list_files(
         except OSError:
             logger.exception("Failed to stat file: %s", file_path)
 
-    # Convert to client format before returning
     return [processed_file_to_client(p) for p in results]
+
+
+@app.get("/files")
+async def list_files(
+    category: Annotated[str | None, Query(description="Filter by category")] = None,
+    name: Annotated[str | None, Query(description="Filter by name")] = None,
+    lastname: Annotated[str | None, Query(description="Filter by lastname")] = None,
+) -> list[dict]:
+    """List all stored files with optional filtering - non-blocking"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _list_files_sync, category, name, lastname)
 
 
 @app.get("/files/{file_id}")
@@ -950,10 +995,10 @@ async def download_zip(
         if not metadata:
             continue
 
-        # Check name and lastname match
-        if sanitized_name not in metadata["name"]:
-            continue
-        if sanitized_lastname not in metadata["name"]:
+        # Match full sanitized name exactly (case-insensitive) to avoid
+        # accidental substring mismatches (and differences in case).
+        metadata_name = metadata.get("name", "")
+        if metadata_name.lower() != f"{sanitized_name}_{sanitized_lastname}".lower():
             continue
 
         # Check category if specified
@@ -975,10 +1020,21 @@ async def download_zip(
 
     filename = f"{sanitized_name}_{sanitized_lastname}_documents.zip"
 
+    # Build RFC-5987 compliant Content-Disposition header so non-latin1
+    # characters don't cause encoding errors when Starlette attempts to
+    # encode headers as latin-1. Provide an ASCII fallback and a UTF-8
+    # percent-encoded `filename*` parameter.
+
+    ascii_filename = filename.encode("ascii", errors="replace").decode("ascii")
+    quoted = _quote(filename, safe="")
+    content_disp = (
+        f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{quoted}"
+    )
+
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disp},
     )
 
 
@@ -1064,7 +1120,7 @@ if __name__ == "__main__":
     fastapi_env = os.getenv("FASTAPI_ENV", os.getenv("ENVIRONMENT", "production"))
 
     uvicorn.run(
-        "server:app",
+        app,
         host=host,
         port=port,
         reload=fastapi_env != "production",

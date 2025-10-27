@@ -215,7 +215,12 @@ export default function AIReceptionApp() {
         return;
       }
 
-      const uploadResult = await response.json().catch(() => []);
+      const uploadResult = (await response.json().catch(() => ({}))) as {
+        success?: UploadedFile[];
+        unclassified?: UploadedFile[];
+        failed?: Array<{ filename: string; error: string }>;
+        summary?: Record<string, number>;
+      };
 
       const filesUrl = `${getBackendOrigin()}/files`;
       const filesResponse = await fetch(filesUrl).catch(() => null);
@@ -224,13 +229,15 @@ export default function AIReceptionApp() {
         persisted = (await filesResponse.json()) as UploadedFile[];
       }
 
-      const merged: UploadedFile[] = [
-        ...(Array.isArray(uploadResult) ? uploadResult : []),
-        ...persisted.filter(
-          (p) =>
-            !Array.isArray(uploadResult) ||
-            !(uploadResult as UploadedFile[]).some((u) => u.uid === p.uid)
-        ),
+      // Merge arrays: prioritize newly returned success and unclassified items
+      const returned: UploadedFile[] = [
+        ...(uploadResult.success || []),
+        ...(uploadResult.unclassified || []),
+      ];
+
+      const merged = [
+        ...returned,
+        ...persisted.filter((p) => !returned.some((r) => r.uid === p.uid)),
       ];
 
       setFiles(merged as UploadedFile[]);

@@ -37,19 +37,10 @@ RUN apt-get update && \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy pyproject and install runtime Python dependencies into venv
-COPY api/pyproject.toml ./
+# Copy requirements file and install runtime Python dependencies into venv
+COPY api/requirements.txt ./requirements.txt
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir \
-    aiofiles>=25.1.0 \
-    fastapi[standard-no-fastapi-cloud-cli]>=0.120.0 \
-    pdf2image>=1.17.0 \
-    pillow>=12.0.0 \
-    pydantic>=2.12.3 \
-    pydantic-settings>=2.11.0 \
-    pytesseract>=0.3.13 \
-    rapidfuzz>=3.14.1 \
-    uvicorn[standard]>=0.22.0
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application source
 COPY api/ /app/

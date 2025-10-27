@@ -19,8 +19,6 @@ import {
   Sun,
   Moon,
   RefreshCw,
-  X,
-  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,6 +36,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 // Types
 interface UploadedFile {
@@ -67,13 +66,14 @@ const strings = {
   uploading: "Обработка файлов...",
   uploadSuccess: "Документы успешно обработаны и классифицированы",
   uploadFail: "Ошибка при загрузке файлов. Попробуйте снова.",
+  invalidFileType: "Неверный формат файла. Поддерживаются PDF, JPG, PNG.",
+  invalidForm: "Пожалуйста, заполните имя и фамилию корректно.",
   noFiles: "Нет загруженных документов",
 };
 
 const getBackendOrigin = () =>
   import.meta.env?.DEV ? "http://localhost:5040" : window.location.origin;
 
-// Category configurations with Material 3 expressive colors
 const categoryInfo: Record<string, CategoryInfo> = {
   Udostoverenie: {
     name: "Удостоверение",
@@ -167,11 +167,8 @@ export default function AIReceptionApp() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [dragActive, setDragActive] = useState(false);
-  const [overlayReject, setOverlayReject] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<UploadedFile | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -209,7 +206,6 @@ export default function AIReceptionApp() {
     if (isLoading) return;
 
     setIsLoading(true);
-    setUploadSuccess(false);
 
     const formData = new FormData();
     fileList.forEach((file) => formData.append("files", file));
@@ -226,8 +222,12 @@ export default function AIReceptionApp() {
       if (!response.ok) {
         const text = await response.text().catch(() => "");
         console.error("Upload failed, status:", response.status, text);
-        setOverlayReject(true);
-        setTimeout(() => setOverlayReject(false), 1200);
+        // show toast on upload failure
+        try {
+          toast.error(strings.uploadFail);
+        } catch (e) {
+          /* ignore if toast not available during SSR */
+        }
         return;
       }
 
@@ -250,36 +250,35 @@ export default function AIReceptionApp() {
       ];
 
       setFiles(merged as UploadedFile[]);
-      setUploadSuccess(true);
-      setTimeout(() => setUploadSuccess(false), 3000);
+      try {
+        toast.success(strings.uploadSuccess);
+      } catch (e) {
+        /* ignore if toast not available during SSR */
+      }
     } catch (error) {
       console.error("Upload failed:", error);
-      setOverlayReject(true);
-      setTimeout(() => setOverlayReject(false), 1200);
+      try {
+        toast.error(strings.uploadFail);
+      } catch (e) {
+        /* ignore if toast not available during SSR */
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragActive(true);
-  };
-
-  const handleDragLeave = () => {
-    setDragActive(false);
-  };
-
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    setDragActive(false);
 
     const droppedFiles = Array.from(e.dataTransfer.files);
     const { valid } = validateFiles(droppedFiles);
 
     if (!valid) {
-      setOverlayReject(true);
-      setTimeout(() => setOverlayReject(false), 1000);
+      try {
+        toast.error(strings.invalidFileType);
+      } catch (e) {
+        /* ignore */
+      }
       return;
     }
 
@@ -295,8 +294,11 @@ export default function AIReceptionApp() {
     const { valid } = validateFiles(selectedFiles);
 
     if (!valid) {
-      setOverlayReject(true);
-      setTimeout(() => setOverlayReject(false), 900);
+      try {
+        toast.error(strings.invalidFileType);
+      } catch (e) {
+        /* ignore */
+      }
       return;
     }
 
@@ -304,7 +306,18 @@ export default function AIReceptionApp() {
   };
 
   const pickFiles = () => {
-    if (!isFormValid() || isLoading) return;
+    if (isLoading) {
+      return;
+    }
+
+    if (!isFormValid()) {
+      try {
+        toast.error(strings.invalidForm);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
     fileInputRef.current?.click();
   };
 
@@ -417,8 +430,6 @@ export default function AIReceptionApp() {
   return (
     <div
       className="min-h-screen bg-background dark:bg-background transition-colors"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
@@ -529,17 +540,6 @@ export default function AIReceptionApp() {
                   value={undefined}
                   className="w-full h-2 rounded-full"
                 />
-              )}
-
-              {uploadSuccess && (
-                <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-950/30 border-2 border-green-200 dark:border-green-800 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-500">
-                  <div className="p-2 rounded-xl bg-green-500 shadow-lg">
-                    <Check className="h-5 w-5 text-white" />
-                  </div>
-                  <p className="text-sm font-medium text-green-700 dark:text-green-300">
-                    {strings.uploadSuccess}
-                  </p>
-                </div>
               )}
             </div>
           </CardContent>
@@ -744,34 +744,6 @@ export default function AIReceptionApp() {
           </div>
         )}
       </main>
-
-      {dragActive && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 pointer-events-none">
-          <Card
-            className={`p-8 ${overlayReject ? "border-red-500 border-2" : ""}`}
-          >
-            <div className="flex flex-col items-center space-y-4">
-              {overlayReject ? (
-                <X className="h-14 w-14 text-destructive" />
-              ) : (
-                <CloudUpload className="h-14 w-14 " />
-              )}
-              <div className="text-center">
-                <p className="text-lg font-semibold">
-                  {overlayReject
-                    ? "Неверный формат файла"
-                    : "Перетащите файлы, чтобы загрузить"}
-                </p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  {overlayReject
-                    ? "Поддерживаются: PDF, JPG, PNG"
-                    : "Отпустите файлы, чтобы начать загрузку"}
-                </p>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
 
       <input
         ref={fileInputRef}

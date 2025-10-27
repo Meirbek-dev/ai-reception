@@ -31,3 +31,4 @@ migrate_working_dir/
 
 uploads
 __pycache__
+api/build

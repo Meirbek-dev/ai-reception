@@ -1,4 +1,20 @@
 ## Multi-stage Dockerfile optimized for size and security
+### Frontend builder: use Node image to build static assets inside the image
+FROM node:24-slim AS frontend-builder
+WORKDIR /workspace
+
+# Install pnpm and deps; copy package files
+COPY package.json pnpm-lock.yaml* ./
+RUN npm i -g pnpm@latest || true
+RUN pnpm fetch || true
+COPY . .
+
+# Build frontend to /workspace/api/build/web
+RUN pnpm install --frozen-lockfile --no-private && \
+    pnpm run build:frontend
+
+
+### Python builder: create virtualenv and install runtime Python packages
 FROM python:3.13.9-slim AS builder
 
 ENV PYTHONUNBUFFERED=1
@@ -17,15 +33,15 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir \
-    flask==3.1.2 \
-    flask-cors==6.0.1 \
-    pdf2image==1.17.0 \
-    pillow==12.0.0 \
-    pytesseract==0.3.13 \
-    paddleocr>=3.3.0 \
-    paddlepaddle>=3.2.0 \
-    werkzeug==3.1.3 \
-    gunicorn==23.0.0
+    aiofiles>=25.1.0 \
+    fastapi[standard-no-fastapi-cloud-cli]>=0.120.0 \
+    pdf2image>=1.17.0 \
+    pillow>=12.0.0 \
+    pydantic>=2.12.3 \
+    pydantic-settings>=2.11.0 \
+    pytesseract>=0.3.13 \
+    rapidfuzz>=3.14.1 \
+    uvicorn[standard]>=0.22.0
 
 ## Final stage: smaller runtime image
 FROM python:3.13.9-slim
@@ -39,6 +55,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     poppler-utils \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user early and make uploads directory
@@ -51,19 +68,21 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy only the necessary application files
 COPY --chown=appuser:appuser server.py ./
-COPY --chown=appuser:appuser build ./build
+
+# Copy the frontend build from the frontend-builder stage into /app/build
+COPY --from=frontend-builder --chown=appuser:appuser /workspace/api/build ./build
 
 # Ensure uploads dir exists
 RUN mkdir -p uploads && chmod 755 uploads
 
 # Environment variables
-ENV FLASK_ENV=production
+ENV FASTAPI_ENV=production
 
 # Expose port and healthcheck
 EXPOSE 5040
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:5040/healthz', timeout=3); sys.exit(0 if r.getcode()==200 else 1)"
 
-# Run with gunicorn (non-root user)
-CMD ["gunicorn", "--bind", "0.0.0.0:5040", "--workers", "2", "--threads", "2", "--timeout", "120", "server:app"]
+# Run with uvicorn (non-root user) to serve the FastAPI app
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5040", "--workers", "2"]
 

@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && tsc",
+    "build:frontend": "vite build",
+    "build:all": "pnpm run build:frontend && tsc",
     "serve": "vite preview",
     "test": "vitest run"
   },
@@ -41,7 +43,6 @@
     "jsdom": "^27.0.1",
     "typescript": "^5.9.3",
     "vite": "npm:rolldown-vite@^7.1.19",
-    "vitest": "^4.0.3",
-    "web-vitals": "^5.1.0"
+    "vitest": "^4.0.3"
   }
 }

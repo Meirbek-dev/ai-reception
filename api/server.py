@@ -225,7 +225,6 @@ class HealthCheck(BaseModel):
     upload_folder_exists: bool
 
 
-
 # ============================================================================
 # RATE LIMITING
 # ============================================================================
@@ -732,7 +731,7 @@ async def upload_files(
     name: Annotated[str, Form(min_length=1, max_length=100)],
     lastname: Annotated[str, Form(min_length=1, max_length=100)],
     files: Annotated[list[UploadFile], File()],
- ) -> list[dict]:
+) -> list[dict]:
     """Upload and process multiple files"""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")

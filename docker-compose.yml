@@ -12,7 +12,7 @@ services:
     volumes:
       - uploads:/app/uploads
     environment:
-      - TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata/
+      - TESSDATA_PREFIX=/usr/share/tessdata/
       - FASTAPI_ENV=production
       - UVICORN_HOST=0.0.0.0
       - UVICORN_WORKERS=4

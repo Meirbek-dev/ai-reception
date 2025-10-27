@@ -64,8 +64,12 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     poppler-utils \
     tesseract-ocr \
+    tesseract-ocr-rus \
     libtesseract-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Ensure tesseract can find tessdata
+ENV TESSDATA_PREFIX=/usr/share/tessdata
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/false appuser || true

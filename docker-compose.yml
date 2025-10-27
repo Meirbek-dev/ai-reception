@@ -1,17 +1,16 @@
 services:
   ai-reception:
     build:
-      context: ..
-      dockerfile: api/Dockerfile
+      context: .
+      dockerfile: api/Dockerfile.production
     container_name: ai-reception
     restart: unless-stopped
     ports:
-      # By default bind to localhost so the backend is only reachable from
-      # the host (safer when using nginx as the reverse proxy). You can
-      # override the bind address at runtime by exporting BIND_HOST.
-      # Example to publish to all interfaces:
-      #   BIND_HOST=0.0.0.0 sudo docker compose up -d --build
-      - "${BIND_HOST:-127.0.0.1}:5040:5040"
+      # By default bind to all interfaces so the backend is reachable at
+      # the server IP. You can override the bind address at runtime by
+      # exporting BIND_HOST. Example to publish only localhost instead:
+      #   BIND_HOST=127.0.0.1 sudo docker compose up -d --build
+      - "${BIND_HOST:-0.0.0.0}:5040:5040"
     volumes:
       - ./uploads:/app/uploads
     environment:

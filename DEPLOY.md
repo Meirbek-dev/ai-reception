@@ -1,96 +1,174 @@
-# Deployment guide for ai-reception
+Deployment guide for AI Reception# Deployment guide for ai-reception
+
+This document describes how to deploy the application to an Ubuntu server and expose it at:This document explains how to build and deploy the project to an Ubuntu server (accessible via SSH at `user@192.168.12.35`) and serve it on a domain (for example `ai-reception.tou.edu.kz`) using Docker, docker-compose, and nginx.
+
+- http://192.168.12.35:5040/ (direct container port)## Assumptions
+
+- https://ai-reception.tou.edu.kz/ (via nginx reverse proxy + TLS)
+
+- You have Docker and docker-compose installed on the server (or can install them).
+
+Prerequisites on the Ubuntu server (assume you can SSH to user@192.168.12.35):- You control DNS for your chosen domain and it points to the server's public IP.
+
+- Ports 80 and 443 are open.
+
+- Docker and Docker Compose (v2) installed- You have SSH access: `ssh user@192.168.12.35`.
+
+- nginx installed (or you can run nginx in a container)
+
+- git (optional) and enough disk space## Quick overview
+
+- Ports 80 and 443 open in the firewall for Let's Encrypt
+
+1. Build the frontend locally so files land in `api/build/web`.
+
+Quick steps1. Copy built assets and `api/` to the server (or push to a registry and pull on the server).
+
+1. Compute a sensible `UVICORN_WORKERS` value on the server and start the service via `docker compose`.
+
+1. Copy the repository to the server (or pull from git):1. Configure host nginx to terminate TLS and reverse-proxy to the backend container (127.0.0.1:5040).
+
+````pwsh---
+
+ssh user@192.168.12.35
+
+# on server## Local build (developer machine)
+
+git clone <your-repo-url> ai-reception
+
+cd ai-receptionInstall dependencies and build the frontend:
+
+
+
+sudo ufw reload
+# AI Reception — Deployment Guide
 
 This document explains how to build and deploy the project to an Ubuntu server (accessible via SSH at `user@192.168.12.35`) and serve it on a domain (for example `ai-reception.tou.edu.kz`) using Docker, docker-compose, and nginx.
 
-## Assumptions
+Targets
 
-- You have Docker and docker-compose installed on the server (or can install them).
-- You control DNS for your chosen domain and it points to the server's public IP.
-- Ports 80 and 443 are open.
-- You have SSH access: `ssh user@192.168.12.35`.
+- Direct container port: `http://192.168.12.35:5040/`
+- Public domain (TLS): `https://ai-reception.tou.edu.kz/`
 
-## Quick overview
+Assumptions
 
-1. Build the frontend locally so files land in `api/build/web`.
-1. Copy built assets and `api/` to the server (or push to a registry and pull on the server).
-1. Compute a sensible `UVICORN_WORKERS` value on the server and start the service via `docker compose`.
-1. Configure host nginx to terminate TLS and reverse-proxy to the backend container (127.0.0.1:5040).
+- You control DNS for the chosen domain and it points to the server's public IP.
+- Ports 80 and 443 can be opened on the server (for Let's Encrypt / HTTPS).
+- Docker, docker-compose (v2 plugin) and nginx can be installed on the server.
 
----
+Overview
 
-## Local build (developer machine)
+The repo contains a production multi-stage Dockerfile (`Dockerfile.production`) that builds the frontend and backend into a single image and a top-level `docker-compose.yml` that publishes port 5040 on the host by default.
 
-Install dependencies and build the frontend:
+Quick deploy (recommended)
 
-```bash
-pnpm install
-pnpm run build:frontend
-```
+1. Clone the repository on the server:
 
-Optional: run the full build/type check:
-
-```bash
-pnpm run build:all
-```
-
-The frontend build output will be placed in `api/build/web` and served by the backend image.
-
----
-
-## Prepare server and deploy (recommended flow)
-
-1. Copy project artifacts to the server
-
-```bash
-# From project root on your workstation
-scp -r api user@192.168.12.35:~/ai-reception
-# or copy the whole repo if you prefer
-scp -r . user@192.168.12.35:~/ai-reception
-```
-
-1. SSH to the server and compute UVICORN_WORKERS (conservative heuristic)
-
-With a many-thread machine (you indicated ~128 threads), each worker consumes memory. A conservative heuristic is:
-
-```text
-workers = max(2, floor(CPU_THREADS / 4))
-```
-
-Run this on the server to pick a starting value:
-
-```bash
+```pwsh
 ssh user@192.168.12.35
-cd ~/ai-reception/api
+# on server
+git clone <your-repo-url> ai-reception
+cd ai-reception
+````
+
+2. Build and start production containers (from repo root):
+
+```pwsh
+# on server, inside repo root
+docker compose up -d --build --remove-orphans
+```
+
+3. Verify the backend is reachable locally on the host:
+
+```pwsh
+# on server
+curl -f http://127.0.0.1:5040/healthz
+```
+
+4. Configure nginx to proxy requests for `ai-reception.tou.edu.kz` to `127.0.0.1:5040` using the provided `nginx.conf` as a starting point.
+
+Example nginx steps (on server):
+
+```pwsh
+sudo cp nginx.conf /etc/nginx/sites-available/ai-reception
+sudo ln -sf /etc/nginx/sites-available/ai-reception /etc/nginx/sites-enabled/ai-reception
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. Obtain TLS certs with Certbot (nginx plugin recommended):
+
+```pwsh
+sudo apt update
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d ai-reception.tou.edu.kz
+```
+
+6. Open firewall ports (ufw example):
+
+```pwsh
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw allow 5040/tcp
+sudo ufw enable
+```
+
+Notes and recommendations
+
+- If you want nginx to be the only publicly exposed service, the `docker-compose.yml` default bind is `0.0.0.0:5040:5040`. To restrict the backend to localhost only, run:
+
+```pwsh
+BIND_HOST=127.0.0.1 docker compose up -d --build
+```
+
+then nginx (running on the host) can proxy to `http://127.0.0.1:5040`.
+
+- The production Dockerfile copies frontend build artifacts from the frontend stage into `/app/build/web`. The backend serves static files from that path if present.
+
+- Compute a conservative number of Uvicorn workers on the server and export it before starting compose. Example heuristic:
+
+```pwsh
 CPU_THREADS=$(nproc --all)
 UVICORN_WORKERS=$(( CPU_THREADS / 4 ))
 if [ "$UVICORN_WORKERS" -lt 2 ]; then UVICORN_WORKERS=2; fi
-echo "Computed UVICORN_WORKERS=$UVICORN_WORKERS (CPU_THREADS=$CPU_THREADS)"
+export UVICORN_WORKERS
+docker compose up -d --build
 ```
 
-If you want to be more memory conservative, use `/8` instead of `/4` in the formula.
+- To renew TLS certs automatically, ensure `certbot` timers are enabled (usually installed by the package). You can test renewal with `sudo certbot renew --dry-run`.
 
-1. Start the service using docker compose
+Troubleshooting
 
-The `docker-compose.yml` in `api/` allows setting `UVICORN_WORKERS`. Start with the computed value:
+- Check container logs: `sudo docker logs ai-reception`.
+- Inspect service status: `docker compose ps`.
+- If the healthcheck fails, curl the health endpoint directly inside the container or on the host.
+- If the frontend is not served, confirm `api/build/web` exists in the image or copy builds from your workstation.
 
-```bash
-# from ~/ai-reception/api on the server
-export UVICORN_WORKERS=${UVICORN_WORKERS:-4}
+Optional: systemd helper
+
+Create `/etc/systemd/system/ai-reception.service` to automatically start the docker compose stack on boot. Example file is optional and can be provided on request.
+
+If you'd like, I can: add a small `scripts/` folder with build-and-deploy helper scripts, add a systemd unit, or prepare an `nginx` site file pre-filled with your real cert paths.
+
+- If you run nginx in a container, ensure `proxy_pass` points to the host networking or to the service container via Docker network name and the compose setup is adjusted accordingly.export UVICORN_WORKERS=${UVICORN_WORKERS:-4}
+
 UVICORN_WORKERS=$UVICORN_WORKERS sudo docker compose up --build -d
-```
 
-You can also override inline:
+- The production Dockerfile copies built frontend assets into `/app/build/web`. The nginx config above proxies all requests to the backend; the backend serves static files from `/app/build/web` if present.```
 
-```bash
+- For zero-downtime deployments, consider using `docker compose pull && docker compose up -d --no-deps --build --remove-orphans ai-reception`.You can also override inline:
+
+If you want, I can also create a small systemd unit or a `docker-compose.override.yml` to make common actions easier.```bash
 UVICORN_WORKERS=32 sudo docker compose up --build -d
-```
+
+````
 
 If you changed `api/docker-compose.yml` to bind to localhost by default, you can publish to all interfaces with an environment override:
 
 ```bash
 # Publish backend on all interfaces (not recommended for production without proxy)
 BIND_HOST=0.0.0.0 UVICORN_WORKERS=4 sudo docker compose up -d --build
-```
+````
 
 Development container
 

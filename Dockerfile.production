@@ -9,13 +9,13 @@ RUN npm i -g pnpm@latest || true
 RUN pnpm fetch || true
 COPY . .
 
-# Build frontend to /workspace/api/build/web
+# Build frontend
 RUN pnpm install --frozen-lockfile --no-private && \
-    pnpm run build:frontend
+    pnpm run build
 
 
 ### Python builder: create virtualenv and install runtime Python packages
-FROM python:3.13.9-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
@@ -44,7 +44,7 @@ RUN pip install --upgrade pip && \
     uvicorn[standard]>=0.22.0
 
 ## Final stage: smaller runtime image
-FROM python:3.13.9-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
@@ -70,7 +70,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --chown=appuser:appuser server.py ./
 
 # Copy the frontend build from the frontend-builder stage into /app/build
-COPY --from=frontend-builder --chown=appuser:appuser /workspace/api/build ./build
+COPY --from=frontend-builder --chown=appuser:appuser /workspace/api/build/web ./build/web
 
 # Ensure uploads dir exists
 RUN mkdir -p uploads && chmod 755 uploads
@@ -85,5 +85,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 
 # Run with uvicorn (non-root user) to serve the FastAPI app
 ENV UVICORN_WORKERS=2
-CMD uvicorn server:app --host 0.0.0.0 --port 5040 --workers ${UVICORN_WORKERS}
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5040", "--workers", "${UVICORN_WORKERS}"]
 

@@ -1,4 +1,4 @@
-FROM python:3.13.9-slim
+FROM python:3.14-slim
 
 # Development image for running the API locally inside Docker with live reload.
 WORKDIR /app

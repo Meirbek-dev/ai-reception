@@ -15,9 +15,7 @@ export default defineConfig({
     viteReact(),
     tailwindcss(),
   ],
-  // Ensure the frontend build output goes into the backend's static folder
   build: {
-    outDir: 'api/build/web',
     emptyOutDir: true,
   },
   resolve: {

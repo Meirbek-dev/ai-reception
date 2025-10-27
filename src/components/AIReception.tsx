@@ -84,37 +84,37 @@ const categoryInfo: Record<string, CategoryInfo> = {
   Udostoverenie: {
     name: "Удостоверение",
     icon: CreditCard,
-    color: "rgb(79, 70, 229)",
+    color: "rgb(103, 80, 164)", // Deep Purple
   },
   Diplom: {
     name: "Диплом/Аттестат",
     icon: GraduationCap,
-    color: "rgb(168, 85, 247)",
+    color: "rgb(171, 71, 188)", // Purple
   },
   ENT: {
     name: "ЕНТ",
     icon: ClipboardList,
-    color: "rgb(249, 115, 22)",
+    color: "rgb(251, 140, 0)", // Orange
   },
   Lgota: {
     name: "Льгота",
     icon: Tag,
-    color: "rgb(34, 197, 94)",
+    color: "rgb(67, 160, 71)", // Green
   },
   Unclassified: {
     name: "Неизвестно",
     icon: HelpCircle,
-    color: "rgb(107, 114, 128)",
+    color: "rgb(117, 117, 117)", // Grey
   },
   Privivka: {
     name: "Прививочный паспорт",
     icon: Syringe,
-    color: "rgb(20, 184, 166)",
+    color: "rgb(0, 172, 193)", // Cyan
   },
   MedSpravka: {
     name: "Медицинская справка",
     icon: Heart,
-    color: "rgb(239, 68, 68)",
+    color: "rgb(229, 57, 53)", // Red
   },
 };
 
@@ -639,8 +639,11 @@ export default function AIReceptionApp() {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-full bg-muted">
-                          <Icon className="h-5 w-5 text-foreground" />
+                        <div
+                          className="p-2 rounded-full"
+                          style={{ background: info.color }}
+                        >
+                          <Icon className="h-5 w-5 text-white" />
                         </div>
                         <span className="font-semibold text-lg text-foreground">
                           {info.name} ({categoryFiles.length})
@@ -671,9 +674,10 @@ export default function AIReceptionApp() {
                             className="flex items-center gap-3 p-3 rounded-xl hover:bg-muted/50"
                           >
                             <div
-                              className={`p-2 rounded-lg shadow-md bg-muted`}
+                              className={`p-2 rounded-lg shadow-md`}
+                              style={{ background: info.color }}
                             >
-                              <FileIcon className="h-5 w-5 text-foreground" />
+                              <FileIcon className="h-5 w-5 text-white" />
                             </div>
 
                             <div className="flex-1 min-w-0">

@@ -90,7 +90,20 @@ export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
           return;
         }
 
+        // Forward event to consumer
         onDrop?.(acceptedFiles, fileRejections, event);
+
+        // Clear native file input so selecting the same file(s) again
+        // will still trigger a change event in the browser. Without
+        // this, many browsers ignore selecting the same file twice.
+        try {
+          if (inputRef.current) {
+            // Setting value to empty string resets the file input
+            (inputRef.current as HTMLInputElement).value = "";
+          }
+        } catch (err) {
+          /* ignore */
+        }
       },
       ...props,
     });

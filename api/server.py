@@ -191,7 +191,6 @@ def processed_file_to_client(p: ProcessedFile) -> dict:
     return {
         "id": p.id,
         "originalName": p.original_name,
-        # `newName` is the stored filename (human-facing saved name)
         "newName": p.filename or None,
         "filename": p.filename or None,
         "category": p.category,
@@ -646,7 +645,7 @@ async def process_single_file(
         status = "unclassified"
 
         if category != DocumentCategory.UNCLASSIFIED:
-            # New filename format: {name}_{lastname}_{CategoryValue}_{idx}_{uuid}{ext}
+            # Filename format: {name}_{lastname}_{category.value}_{idx}_{timestamp}{ext}
             sanitized_name = sanitize_name(name)
             sanitized_lastname = sanitize_name(lastname)
 

@@ -4,8 +4,8 @@ import { UploadIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   createContext,
-  useContext,
   forwardRef,
+  useContext,
   useImperativeHandle,
   useRef,
 } from "react";
@@ -13,13 +13,13 @@ import type { DropEvent, DropzoneOptions, FileRejection } from "react-dropzone";
 import { useDropzone } from "react-dropzone";
 import { cn } from "@/lib/utils";
 
-type DropzoneContextType = {
+interface DropzoneContextType {
   src?: File[];
   accept?: DropzoneOptions["accept"];
   maxSize?: DropzoneOptions["maxSize"];
   minSize?: DropzoneOptions["minSize"];
   maxFiles?: DropzoneOptions["maxFiles"];
-};
+}
 
 const renderBytes = (bytes: number) => {
   const units = ["Б", "КБ", "МБ"];
@@ -28,7 +28,7 @@ const renderBytes = (bytes: number) => {
 
   while (size >= 1024 && unitIndex < units.length - 1) {
     size /= 1024;
-    unitIndex++;
+    unitIndex += 1;
   }
 
   return `${size.toFixed(2)}${units[unitIndex]}`;
@@ -49,9 +49,9 @@ export type DropzoneProps = Omit<DropzoneOptions, "onDrop"> & {
   children?: ReactNode;
 };
 
-export type DropzoneHandle = {
+export interface DropzoneHandle {
   open: () => void;
-};
+}
 
 export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
   (
@@ -101,7 +101,7 @@ export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
             // Setting value to empty string resets the file input
             (inputRef.current as HTMLInputElement).value = "";
           }
-        } catch (err) {
+        } catch {
           /* ignore */
         }
       },
@@ -114,7 +114,7 @@ export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
       // call any existing handler from getRootProps
       try {
         rootProps.onClick?.(e);
-      } catch (err) {
+      } catch {
         /* ignore */
       }
 
@@ -127,7 +127,7 @@ export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
       try {
         // forward to any existing handler
         (rootProps as any).onKeyDown?.(e);
-      } catch (err) {
+      } catch {
         /* ignore */
       }
 
@@ -180,10 +180,10 @@ const useDropzoneContext = () => {
   return context;
 };
 
-export type DropzoneContentProps = {
+export interface DropzoneContentProps {
   children?: ReactNode;
   className?: string;
-};
+}
 
 const maxLabelItems = 3;
 
@@ -220,10 +220,10 @@ export const DropzoneContent = ({
   );
 };
 
-export type DropzoneEmptyStateProps = {
+export interface DropzoneEmptyStateProps {
   children?: ReactNode;
   className?: string;
-};
+}
 
 export const DropzoneEmptyState = ({
   children,

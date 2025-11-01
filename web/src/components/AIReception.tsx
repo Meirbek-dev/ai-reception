@@ -1,24 +1,24 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ClipboardList,
   CloudUpload,
+  CreditCard,
+  Download,
+  File,
+  FileText,
   FileUp,
   FolderOpen,
-  Download,
-  Trash2,
-  User,
-  CreditCard,
   GraduationCap,
-  ClipboardList,
-  Tag,
-  HelpCircle,
-  Syringe,
   Heart,
-  FileText,
+  HelpCircle,
   ImageIcon,
-  File,
-  Sun,
   Moon,
   RefreshCw,
+  Sun,
+  Syringe,
+  Tag,
+  Trash2,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,8 +41,8 @@ import {
   Dropzone,
   DropzoneContent,
   DropzoneEmptyState,
-  type DropzoneHandle,
 } from "@/components/kibo-ui/dropzone";
+import type { DropzoneHandle } from "@/components/kibo-ui/dropzone";
 
 // Types
 interface UploadedFile {
@@ -122,14 +122,17 @@ const getFileIcon = (filename?: string) => {
   if (!filename) return File;
   const ext = String(filename).toLowerCase().split(".").pop() || "";
   switch (ext) {
-    case "pdf":
+    case "pdf": {
       return FileText;
+    }
     case "jpg":
     case "jpeg":
-    case "png":
+    case "png": {
       return ImageIcon;
-    default:
+    }
+    default: {
       return File;
+    }
   }
 };
 
@@ -383,7 +386,7 @@ const FileRow = React.memo(function FileRow({
   return (
     <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 hover:shadow-sm transition-shadow">
       <div
-        className={`p-2 rounded-lg shadow-sm`}
+        className="p-2 rounded-lg shadow-sm"
         style={{ background: info.color }}
       >
         <FileIcon className="h-5 w-5 text-white" />
@@ -511,7 +514,7 @@ export default function AIReceptionApp() {
       if (typeof window !== "undefined" && window.matchMedia) {
         return window.matchMedia("(prefers-color-scheme: dark)").matches;
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
     return false;
@@ -528,13 +531,9 @@ export default function AIReceptionApp() {
 
   useEffect(() => {
     try {
-      if (isDark) {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
+      document.documentElement.classList.toggle("dark", isDark);
       localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
-    } catch (e) {
+    } catch {
       // ignore
     }
   }, [isDark]);
@@ -573,7 +572,7 @@ export default function AIReceptionApp() {
           console.error("Upload failed, status:", response.status, text);
           try {
             toast.error(strings.uploadFail);
-          } catch (e) {
+          } catch {
             /* ignore if toast not available during SSR */
           }
           return;
@@ -582,7 +581,7 @@ export default function AIReceptionApp() {
         const uploadResult = (await response.json().catch(() => ({}))) as {
           success?: UploadedFile[];
           unclassified?: UploadedFile[];
-          failed?: Array<{ filename: string; error: string }>;
+          failed?: { filename: string; error: string }[];
           summary?: Record<string, number>;
         };
 
@@ -608,14 +607,14 @@ export default function AIReceptionApp() {
         setFiles(merged as UploadedFile[]);
         try {
           toast.success(strings.uploadSuccess);
-        } catch (e) {
+        } catch {
           /* ignore if toast not available during SSR */
         }
       } catch (error) {
         console.error("Upload failed:", error);
         try {
           toast.error(strings.uploadFail);
-        } catch (e) {
+        } catch {
           /* ignore if toast not available during SSR */
         }
       } finally {
@@ -633,7 +632,7 @@ export default function AIReceptionApp() {
         const message = fileRejections?.[0]?.errors?.[0]?.message;
         try {
           toast.error(message || strings.invalidFileType);
-        } catch (e) {
+        } catch {
           /* ignore */
         }
         return;
@@ -642,7 +641,7 @@ export default function AIReceptionApp() {
       if (!isFormValid()) {
         try {
           toast.error(strings.invalidForm);
-        } catch (e) {
+        } catch {
           /* ignore */
         }
         return;
@@ -658,7 +657,7 @@ export default function AIReceptionApp() {
     if (!isFormValid()) {
       try {
         toast.error(strings.invalidForm);
-      } catch (e) {
+      } catch {
         /* ignore */
       }
       return;

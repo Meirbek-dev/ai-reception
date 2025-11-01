@@ -909,7 +909,10 @@ def _list_files_sync(
 
         # The stored `metadata["name"]` is expected to contain the
         # sanitized name and lastname (name_lastname). Require both to match.
-        if sanitized_name not in metadata["name"] or sanitized_lastname not in metadata["name"]:
+        if (
+            sanitized_name not in metadata["name"]
+            or sanitized_lastname not in metadata["name"]
+        ):
             continue
 
         if category and metadata["category"] != category:
@@ -1075,7 +1078,9 @@ async def delete_file(
     return await _delete_file_by_id(file_id, name, lastname)
 
 
-async def _delete_file_by_id(file_id: str, name: str | None, lastname: str | None) -> FileDeleteResponse:
+async def _delete_file_by_id(
+    file_id: str, name: str | None, lastname: str | None
+) -> FileDeleteResponse:
     """Helper to delete stored file by parsed UUID-like id."""
     if not settings.upload_folder.exists():
         raise HTTPException(status_code=404, detail="File not found")

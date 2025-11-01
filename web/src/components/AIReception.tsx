@@ -140,9 +140,369 @@ const normalizeCategoryKey = (raw?: string | null): string => {
   return String(raw).trim();
 };
 
-export default function AIReceptionApp() {
-  const THEME_KEY = "ai_reception_theme";
+// Split into smaller components to reduce re-renders. Keep them in the same file
+// and memoize where appropriate.
 
+const THEME_KEY = "ai_reception_theme";
+
+// HeaderBar: depends only on isDark and toggle
+const HeaderBar = React.memo(function HeaderBar({
+  isDark,
+  toggleDark,
+}: {
+  isDark: boolean;
+  toggleDark: () => void;
+}) {
+  return (
+    <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between">
+          <div className="flex items-center">
+            <a href="#" aria-label="Home" className="block group">
+              <img
+                src={isDark ? "/logo_light.png" : "/logo_dark.png"}
+                alt="Logo"
+                className="h-14 w-fit object-contain transition-transform duration-300 group-hover:scale-105"
+              />
+            </a>
+          </div>
+
+          <div className="flex-1 flex items-center justify-center">
+            <h1
+              className={`text-xl sm:text-2xl font-semibold tracking-tight ${
+                isDark ? "text-foreground" : "text-tou"
+              }`}
+            >
+              {strings.appTitle}
+            </h1>
+          </div>
+
+          <div className="flex items-center justify-end">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleDark}
+              className="rounded-full h-12 w-12 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:scale-105 shadow-none"
+              aria-label="Toggle theme"
+            >
+              {isDark ? (
+                <Sun className="h-5 w-5 text-amber-500" />
+              ) : (
+                <Moon className="h-5 w-5 text-tou" />
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+});
+
+const FormCard = React.memo(function FormCard({
+  name,
+  lastName,
+  setName,
+  setLastName,
+  isLoading,
+  onPickFiles,
+  onReset,
+  isFormValid,
+}: {
+  name: string;
+  lastName: string;
+  setName: (v: string) => void;
+  setLastName: (v: string) => void;
+  isLoading: boolean;
+  onPickFiles: () => void;
+  onReset: () => void;
+  isFormValid: () => boolean;
+}) {
+  return (
+    <Card className="overflow-hidden shadow-md">
+      <CardHeader className="py-5 px-4">
+        <CardTitle className="flex items-center gap-3 text-foreground">
+          <User className="h-6 w-6" />
+          {strings.appHeader}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="py-4 px-4">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">{strings.nameLabel}</Label>
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={isLoading}
+                placeholder="Введите имя"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lastName">{strings.lastNameLabel}</Label>
+              <Input
+                id="lastName"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                disabled={isLoading}
+                placeholder="Введите фамилию"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={onPickFiles}
+              disabled={!isFormValid() || isLoading}
+              className="flex-1 min-w-0"
+            >
+              {isLoading ? (
+                <>
+                  <RefreshCw className="mr-2 h-5 w-5 animate-spin" />
+                  {strings.uploading}
+                </>
+              ) : (
+                <>
+                  <CloudUpload className="mr-2 h-5 w-5" />
+                  {strings.uploadBtn}
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={onReset}
+              className="flex-none whitespace-nowrap px-4 py-2"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Новый абитуриент
+            </Button>
+          </div>
+
+          {isLoading && (
+            <Progress value={undefined} className="w-full h-2 rounded-full" />
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
+const DropzoneArea = React.memo(function DropzoneArea({
+  dropzoneRef,
+  onDrop,
+  disabled,
+  onPickFiles,
+  isFormValid,
+  isLoading,
+}: {
+  dropzoneRef: React.RefObject<DropzoneHandle | null>;
+  onDrop: (accepted: File[], rejected: any[]) => void;
+  disabled: boolean;
+  onPickFiles: () => void;
+  isFormValid: () => boolean;
+  isLoading: boolean;
+}) {
+  return (
+    <Dropzone
+      ref={dropzoneRef}
+      maxFiles={12}
+      onDrop={onDrop}
+      disabled={disabled}
+      className="cursor-pointer transition-all duration-300 border-2 border-dashed overflow-hidden hover:scale-[1.01] shadow-sm hover:shadow-lg rounded-xl p-1"
+    >
+      <DropzoneEmptyState>
+        <CardContent className="py-12 px-8">
+          <div className="flex flex-col items-center justify-center text-center space-y-4">
+            <CloudUpload className="h-14 w-14" />
+            <div>
+              <p className="text-xl font-bold text-foreground">
+                Перетащите или нажмите, чтобы выбрать файлы
+              </p>
+              <p className="text-sm text-muted-foreground mt-3 font-medium">
+                Поддерживаемые форматы: PDF, JPG, PNG
+              </p>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
+                {Object.entries(categoryInfo)
+                  .filter(([key]) => key !== "Unclassified")
+                  .map(([key, info]) => {
+                    const IconSmall = info.icon;
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center gap-2 px-2 py-1 rounded-full bg-muted/20"
+                        style={{ opacity: 0.95 }}
+                      >
+                        <div
+                          className="p-1 rounded-full"
+                          style={{ background: info.color }}
+                        >
+                          <IconSmall className="h-3 w-3 text-white" />
+                        </div>
+                        <span className="text-xs">{info.name}</span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+            <Button
+              variant="secondary"
+              disabled={!isFormValid() || isLoading}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPickFiles();
+              }}
+              className="hover:scale-103 transition-all duration-300 shadow-sm hover:shadow-md px-4 py-2"
+            >
+              <FileUp className="mr-2 h-5 w-5" />
+              Выбрать файлы
+            </Button>
+          </div>
+        </CardContent>
+      </DropzoneEmptyState>
+      <DropzoneContent />
+    </Dropzone>
+  );
+});
+
+const FileRow = React.memo(function FileRow({
+  file,
+  info,
+  selected,
+  onToggle,
+  onDownload,
+  onDeleteDialog,
+}: {
+  file: UploadedFile;
+  info: CategoryInfo | { name: string; icon: any; color: string };
+  selected: boolean;
+  onToggle: (uid: string) => void;
+  onDownload: (file: UploadedFile) => void;
+  onDeleteDialog: (file: UploadedFile) => void;
+}) {
+  const FileIcon = getFileIcon(file.originalName);
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 hover:shadow-sm transition-shadow">
+      <div
+        className={`p-2 rounded-lg shadow-sm`}
+        style={{ background: info.color }}
+      >
+        <FileIcon className="h-5 w-5 text-white" />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-sm truncate text-foreground">
+          {file.originalName}
+        </p>
+        {file.newName && (
+          <p className="text-xs text-muted-foreground mt-1 font-medium">
+            Сохранено как {file.newName}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggle(file.uid)}
+        />
+        {normalizeCategoryKey(file.category) !== "Unclassified" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onDownload(file)}
+            className="hover:scale-105 transition-all duration-300"
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onDeleteDialog(file)}
+          className="hover:scale-105 transition-all duration-300 hover:text-red-600 h-10 w-10"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+});
+
+const FileGroup = React.memo(function FileGroup({
+  category,
+  categoryFiles,
+  onDownloadFile,
+  onToggle,
+  selectedSet,
+  onDeleteDialog,
+}: {
+  category: string;
+  categoryFiles: UploadedFile[];
+  onDownloadFile: (file: UploadedFile) => void;
+  onToggle: (uid: string) => void;
+  selectedSet: Set<string>;
+  onDeleteDialog: (file: UploadedFile) => void;
+}) {
+  const info = categoryInfo[category] || {
+    name: category,
+    icon: File,
+    color: "rgb(156, 163, 175)",
+  };
+  const Icon = info.icon;
+
+  return (
+    <Card
+      key={category}
+      className="overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-3 rounded-lg"
+    >
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="p-2 rounded-full"
+              style={{ background: info.color }}
+            >
+              <Icon className="h-5 w-5 text-white" />
+            </div>
+            <span className="font-semibold text-lg text-foreground">
+              {info.name} ({categoryFiles.length})
+            </span>
+          </div>
+          {category !== "Unclassified" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                categoryFiles.forEach((f) => {
+                  if (f.id) onDownloadFile(f);
+                });
+              }}
+              className="hover:scale-105 transition-all duration-300"
+            >
+              <Download className="h-5 w-5" />
+            </Button>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          {categoryFiles.map((file) => (
+            <FileRow
+              key={file.uid}
+              file={file}
+              info={info}
+              selected={selectedSet.has(file.uid)}
+              onToggle={onToggle}
+              onDownload={onDownloadFile}
+              onDeleteDialog={onDeleteDialog}
+            />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
+export default function AIReceptionApp() {
   const [isDark, setIsDark] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(THEME_KEY);
@@ -156,6 +516,7 @@ export default function AIReceptionApp() {
     }
     return false;
   });
+
   const [name, setName] = useState("");
   const [lastName, setLastName] = useState("");
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -186,110 +547,113 @@ export default function AIReceptionApp() {
     return noDigits.test(trimmedName) && noDigits.test(trimmedLast);
   }, [name, lastName]);
 
-  const uploadFiles = async (fileList: File[]) => {
-    if (isLoading) return;
+  // Recreate handlers with stable identities where useful
+  const toggleDark = useCallback(() => setIsDark((v) => !v), []);
 
-    setIsLoading(true);
+  const uploadFiles = useCallback(
+    async (fileList: File[]) => {
+      if (isLoading) return;
 
-    const formData = new FormData();
-    fileList.forEach((file) => formData.append("files", file));
-    formData.append("name", name);
-    formData.append("lastname", lastName);
+      setIsLoading(true);
 
-    try {
-      const uploadUrl = `${getBackendOrigin()}/upload`;
-      const response = await fetch(uploadUrl, {
-        method: "POST",
-        body: formData,
-      });
+      const formData = new FormData();
+      fileList.forEach((file) => formData.append("files", file));
+      formData.append("name", name);
+      formData.append("lastname", lastName);
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        console.error("Upload failed, status:", response.status, text);
-        // show toast on upload failure
+      try {
+        const uploadUrl = `${getBackendOrigin()}/upload`;
+        const response = await fetch(uploadUrl, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const text = await response.text().catch(() => "");
+          console.error("Upload failed, status:", response.status, text);
+          try {
+            toast.error(strings.uploadFail);
+          } catch (e) {
+            /* ignore if toast not available during SSR */
+          }
+          return;
+        }
+
+        const uploadResult = (await response.json().catch(() => ({}))) as {
+          success?: UploadedFile[];
+          unclassified?: UploadedFile[];
+          failed?: Array<{ filename: string; error: string }>;
+          summary?: Record<string, number>;
+        };
+
+        const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
+          name
+        )}&lastname=${encodeURIComponent(lastName)}`;
+        const filesResponse = await fetch(filesUrl).catch(() => null);
+        let persisted: UploadedFile[] = [];
+        if (filesResponse && filesResponse.ok) {
+          persisted = (await filesResponse.json()) as UploadedFile[];
+        }
+
+        const returned: UploadedFile[] = [
+          ...(uploadResult.success || []),
+          ...(uploadResult.unclassified || []),
+        ];
+
+        const merged = [
+          ...returned,
+          ...persisted.filter((p) => !returned.some((r) => r.uid === p.uid)),
+        ];
+
+        setFiles(merged as UploadedFile[]);
+        try {
+          toast.success(strings.uploadSuccess);
+        } catch (e) {
+          /* ignore if toast not available during SSR */
+        }
+      } catch (error) {
+        console.error("Upload failed:", error);
         try {
           toast.error(strings.uploadFail);
         } catch (e) {
           /* ignore if toast not available during SSR */
         }
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [isLoading, name, lastName]
+  );
+
+  const handleDrop = useCallback(
+    (acceptedFiles: File[], fileRejections: any[]) => {
+      if (!acceptedFiles || acceptedFiles.length === 0) return;
+
+      if (fileRejections && fileRejections.length > 0) {
+        const message = fileRejections?.[0]?.errors?.[0]?.message;
+        try {
+          toast.error(message || strings.invalidFileType);
+        } catch (e) {
+          /* ignore */
+        }
         return;
       }
 
-      const uploadResult = (await response.json().catch(() => ({}))) as {
-        success?: UploadedFile[];
-        unclassified?: UploadedFile[];
-        failed?: Array<{ filename: string; error: string }>;
-        summary?: Record<string, number>;
-      };
-
-      const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-        name
-      )}&lastname=${encodeURIComponent(lastName)}`;
-      const filesResponse = await fetch(filesUrl).catch(() => null);
-      let persisted: UploadedFile[] = [];
-      if (filesResponse && filesResponse.ok) {
-        persisted = (await filesResponse.json()) as UploadedFile[];
+      if (!isFormValid()) {
+        try {
+          toast.error(strings.invalidForm);
+        } catch (e) {
+          /* ignore */
+        }
+        return;
       }
 
-      // Merge arrays: prioritize newly returned success and unclassified items
-      const returned: UploadedFile[] = [
-        ...(uploadResult.success || []),
-        ...(uploadResult.unclassified || []),
-      ];
+      uploadFiles(acceptedFiles);
+    },
+    [isFormValid, uploadFiles]
+  );
 
-      const merged = [
-        ...returned,
-        ...persisted.filter((p) => !returned.some((r) => r.uid === p.uid)),
-      ];
-
-      setFiles(merged as UploadedFile[]);
-      try {
-        toast.success(strings.uploadSuccess);
-      } catch (e) {
-        /* ignore if toast not available during SSR */
-      }
-    } catch (error) {
-      console.error("Upload failed:", error);
-      try {
-        toast.error(strings.uploadFail);
-      } catch (e) {
-        /* ignore if toast not available during SSR */
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleDrop = (acceptedFiles: File[], fileRejections: any[]) => {
-    // If user opened file picker and then cancelled, acceptedFiles will be empty.
-    // Guard against sending an upload request with no files which causes 422 from backend.
-    if (!acceptedFiles || acceptedFiles.length === 0) {
-      return;
-    }
-
-    if (fileRejections && fileRejections.length > 0) {
-      const message = fileRejections?.[0]?.errors?.[0]?.message;
-      try {
-        toast.error(message || strings.invalidFileType);
-      } catch (e) {
-        /* ignore */
-      }
-      return;
-    }
-
-    if (!isFormValid()) {
-      try {
-        toast.error(strings.invalidForm);
-      } catch (e) {
-        /* ignore */
-      }
-      return;
-    }
-
-    uploadFiles(acceptedFiles);
-  };
-
-  const pickFiles = () => {
+  const pickFiles = useCallback(() => {
     if (isLoading) return;
     if (!isFormValid()) {
       try {
@@ -301,73 +665,75 @@ export default function AIReceptionApp() {
     }
 
     dropzoneRef.current?.open();
-  };
+  }, [isFormValid, isLoading]);
 
-  const deleteFile = async (file: UploadedFile) => {
-    // If the file has no backend id, or it's classified as Unclassified,
-    // just remove it from UI state without calling the backend.
-    if (!file.id || normalizeCategoryKey(file.category) === "Unclassified") {
-      setFiles((prev) => prev.filter((f) => f !== file));
-      return;
-    }
+  const deleteFile = useCallback(
+    async (file: UploadedFile) => {
+      if (!file.id || normalizeCategoryKey(file.category) === "Unclassified") {
+        setFiles((prev) => prev.filter((f) => f !== file));
+        return;
+      }
 
-    try {
+      try {
+        const url = `${getBackendOrigin()}/files/${encodeURIComponent(
+          file.id
+        )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
+          lastName
+        )}`;
+        const response = await fetch(url, { method: "DELETE" });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            setFiles((prev) => prev.filter((f) => f !== file));
+            return;
+          }
+          const text = await response.text().catch(() => "");
+          console.error("Delete failed, status:", response.status, text);
+          return;
+        }
+
+        const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
+          name
+        )}&lastname=${encodeURIComponent(lastName)}`;
+        const filesResponse = await fetch(filesUrl);
+        if (!filesResponse.ok) {
+          console.error(
+            "Failed to fetch files list after delete",
+            filesResponse.status
+          );
+          return;
+        }
+
+        const filesData = await filesResponse.json();
+        setFiles(filesData as UploadedFile[]);
+      } catch (error) {
+        console.error("Delete failed:", error);
+      }
+    },
+    [name, lastName]
+  );
+
+  const downloadFile = useCallback(
+    (file: UploadedFile) => {
+      if (!file.id) return;
       const url = `${getBackendOrigin()}/files/${encodeURIComponent(
         file.id
       )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
         lastName
       )}`;
-      const response = await fetch(url, { method: "DELETE" });
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.download = file.newName || file.originalName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    },
+    [name, lastName]
+  );
 
-      if (!response.ok) {
-        // If the file wasn't found on the server, remove it locally to keep UI consistent.
-        if (response.status === 404) {
-          setFiles((prev) => prev.filter((f) => f !== file));
-          return;
-        }
-
-        const text = await response.text().catch(() => "");
-        console.error("Delete failed, status:", response.status, text);
-        return;
-      }
-
-      const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-        name
-      )}&lastname=${encodeURIComponent(lastName)}`;
-      const filesResponse = await fetch(filesUrl);
-      if (!filesResponse.ok) {
-        console.error(
-          "Failed to fetch files list after delete",
-          filesResponse.status
-        );
-        return;
-      }
-
-      const filesData = await filesResponse.json();
-      setFiles(filesData as UploadedFile[]);
-    } catch (error) {
-      console.error("Delete failed:", error);
-    }
-  };
-
-  const downloadFile = (file: UploadedFile) => {
-    if (!file.id) return;
-    const url = `${getBackendOrigin()}/files/${encodeURIComponent(
-      file.id
-    )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
-      lastName
-    )}`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noreferrer";
-    a.download = file.newName || file.originalName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  };
-
-  const downloadAll = () => {
+  const downloadAll = useCallback(() => {
     const url = `${getBackendOrigin()}/download_zip?name=${encodeURIComponent(
       name
     )}&lastname=${encodeURIComponent(lastName)}`;
@@ -379,227 +745,80 @@ export default function AIReceptionApp() {
     document.body.appendChild(a);
     a.click();
     a.remove();
-  };
+  }, [name, lastName]);
 
-  const toggleSelection = (uid: string) => {
+  const toggleSelection = useCallback((uid: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(uid)) {
-        next.delete(uid);
-      } else {
-        next.add(uid);
-      }
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
       return next;
     });
-  };
+  }, []);
 
-  const toggleSelectAll = () => {
-    const allUids = files.map((f) => f.uid);
-    if (selected.size === files.length && files.length > 0) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(allUids));
-    }
-  };
+  const toggleSelectAll = useCallback(() => {
+    setSelected((prev) => {
+      const allUids = files.map((f) => f.uid);
+      if (prev.size === files.length && files.length > 0)
+        return new Set<string>();
+      return new Set(allUids);
+    });
+  }, [files]);
 
-  const deleteSelected = async () => {
+  const deleteSelected = useCallback(async () => {
     const filesToDelete = files.filter((f) => selected.has(f.uid));
     for (const file of filesToDelete) {
+      // eslint-disable-next-line no-await-in-loop
       await deleteFile(file);
     }
     setSelected(new Set());
-  };
+  }, [files, selected, deleteFile]);
 
-  const reset = () => {
+  const reset = useCallback(() => {
     setName("");
     setLastName("");
     setFiles([]);
     setSelected(new Set());
-  };
+  }, []);
 
-  const groupedFiles = files.reduce((acc, file) => {
-    const categoryKey = normalizeCategoryKey(file.category);
+  const groupedFiles = React.useMemo(() => {
+    return files.reduce((acc, file) => {
+      const categoryKey = normalizeCategoryKey(file.category);
+      if (!acc[categoryKey]) acc[categoryKey] = [];
+      acc[categoryKey].push(file);
+      return acc;
+    }, {} as Record<string, UploadedFile[]>);
+  }, [files]);
 
-    if (!acc[categoryKey]) {
-      acc[categoryKey] = [];
-    }
-    acc[categoryKey].push(file);
-    return acc;
-  }, {} as Record<string, UploadedFile[]>);
+  const openDeleteDialogForFile = useCallback((file: UploadedFile) => {
+    setFileToDelete(file);
+    setDeleteDialogOpen(true);
+  }, []);
 
   return (
     <div className="min-h-screen bg-background dark:bg-background transition-colors">
-      <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between">
-            <div className="flex items-center">
-              <a href="#" aria-label="Home" className="block group">
-                <img
-                  src={isDark ? "/logo_light.png" : "/logo_dark.png"}
-                  alt="Logo"
-                  className="h-14 w-fit object-contain transition-transform duration-300 group-hover:scale-105"
-                />
-              </a>
-            </div>
-
-            <div className="flex-1 flex items-center justify-center">
-              <h1
-                className={`text-xl sm:text-2xl font-semibold tracking-tight ${
-                  isDark ? "text-foreground" : "text-tou"
-                }`}
-              >
-                {strings.appTitle}
-              </h1>
-            </div>
-
-            <div className="flex items-center justify-end">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsDark(!isDark)}
-                className="rounded-full h-12 w-12 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:scale-105 shadow-none"
-                aria-label="Toggle theme"
-              >
-                {isDark ? (
-                  <Sun className="h-5 w-5 text-amber-500" />
-                ) : (
-                  <Moon className="h-5 w-5 text-tou" />
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <HeaderBar isDark={isDark} toggleDark={toggleDark} />
 
       <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        <Card className="overflow-hidden shadow-md">
-          <CardHeader className="py-5 px-4">
-            <CardTitle className="flex items-center gap-3 text-foreground">
-              <User className="h-6 w-6" />
-              {strings.appHeader}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="py-4 px-4">
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">{strings.nameLabel}</Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    disabled={isLoading}
-                    placeholder="Введите имя"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lastName">{strings.lastNameLabel}</Label>
-                  <Input
-                    id="lastName"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    disabled={isLoading}
-                    placeholder="Введите фамилию"
-                  />
-                </div>
-              </div>
+        <FormCard
+          name={name}
+          lastName={lastName}
+          setName={setName}
+          setLastName={setLastName}
+          isLoading={isLoading}
+          onPickFiles={pickFiles}
+          onReset={reset}
+          isFormValid={isFormValid}
+        />
 
-              <div className="flex items-center gap-3">
-                <Button
-                  onClick={pickFiles}
-                  disabled={!isFormValid() || isLoading}
-                  className="flex-1 min-w-0"
-                >
-                  {isLoading ? (
-                    <>
-                      <RefreshCw className="mr-2 h-5 w-5 animate-spin" />
-                      {strings.uploading}
-                    </>
-                  ) : (
-                    <>
-                      <CloudUpload className="mr-2 h-5 w-5" />
-                      {strings.uploadBtn}
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={reset}
-                  className="flex-none whitespace-nowrap px-4 py-2"
-                >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Новый абитуриент
-                </Button>
-              </div>
-
-              {isLoading && (
-                <Progress
-                  value={undefined}
-                  className="w-full h-2 rounded-full"
-                />
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Dropzone
-          ref={dropzoneRef}
-          maxFiles={12}
+        <DropzoneArea
+          dropzoneRef={dropzoneRef}
           onDrop={handleDrop}
           disabled={!isFormValid() || isLoading}
-          className="cursor-pointer transition-all duration-300 border-2 border-dashed overflow-hidden hover:scale-[1.01] shadow-sm hover:shadow-lg rounded-xl p-1"
-        >
-          <DropzoneEmptyState>
-            <CardContent className="py-12 px-8">
-              <div className="flex flex-col items-center justify-center text-center space-y-4">
-                <CloudUpload className="h-14 w-14" />
-                <div>
-                  <p className="text-xl font-bold text-foreground">
-                    Перетащите или нажмите, чтобы выбрать файлы
-                  </p>
-                  <p className="text-sm text-muted-foreground mt-3 font-medium">
-                    Поддерживаемые форматы: PDF, JPG, PNG
-                  </p>
-                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
-                    {Object.entries(categoryInfo)
-                      .filter(([key]) => key !== "Unclassified")
-                      .map(([key, info]) => {
-                        const IconSmall = info.icon;
-                        return (
-                          <div
-                            key={key}
-                            className="flex items-center gap-2 px-2 py-1 rounded-full bg-muted/20"
-                            style={{ opacity: 0.95 }}
-                          >
-                            <div
-                              className="p-1 rounded-full"
-                              style={{ background: info.color }}
-                            >
-                              <IconSmall className="h-3 w-3 text-white" />
-                            </div>
-                            <span className="text-xs">{info.name}</span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-                <Button
-                  variant="secondary"
-                  disabled={!isFormValid() || isLoading}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    pickFiles();
-                  }}
-                  className="hover:scale-103 transition-all duration-300 shadow-sm hover:shadow-md px-4 py-2"
-                >
-                  <FileUp className="mr-2 h-5 w-5" />
-                  Выбрать файлы
-                </Button>
-              </div>
-            </CardContent>
-          </DropzoneEmptyState>
-          <DropzoneContent />
-        </Dropzone>
+          onPickFiles={pickFiles}
+          isFormValid={isFormValid}
+          isLoading={isLoading}
+        />
 
         {files.length === 0 ? (
           <Card className="overflow-hidden">
@@ -646,9 +865,7 @@ export default function AIReceptionApp() {
                   size="sm"
                   disabled={selected.size === 0}
                   onClick={() => {
-                    if (selected.size > 0) {
-                      setDeleteDialogOpen(true);
-                    }
+                    if (selected.size > 0) setDeleteDialogOpen(true);
                   }}
                   className="hover:scale-103 transition-all duration-300 disabled:hover:scale-100 px-3 py-1 shadow-sm"
                 >
@@ -658,111 +875,17 @@ export default function AIReceptionApp() {
               </div>
             </div>
 
-            {Object.entries(groupedFiles).map(([category, categoryFiles]) => {
-              const info = categoryInfo[category] || {
-                name: category,
-                icon: File,
-                color: "rgb(156, 163, 175)",
-              };
-              const Icon = info.icon;
-
-              return (
-                <Card
-                  key={category}
-                  className="overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-3 rounded-lg"
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="p-2 rounded-full"
-                          style={{ background: info.color }}
-                        >
-                          <Icon className="h-5 w-5 text-white" />
-                        </div>
-                        <span className="font-semibold text-lg text-foreground">
-                          {info.name} ({categoryFiles.length})
-                        </span>
-                      </div>
-                      {category !== "Unclassified" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            categoryFiles.forEach((f) => {
-                              if (f.id) downloadFile(f);
-                            });
-                          }}
-                          className="hover:scale-105 transition-all duration-300"
-                        >
-                          <Download className="h-5 w-5" />
-                        </Button>
-                      )}
-                    </div>
-
-                    <div className="space-y-3">
-                      {categoryFiles.map((file) => {
-                        const FileIcon = getFileIcon(file.originalName);
-                        return (
-                          <div
-                            key={file.uid}
-                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 hover:shadow-sm transition-shadow"
-                          >
-                            <div
-                              className={`p-2 rounded-lg shadow-sm`}
-                              style={{ background: info.color }}
-                            >
-                              <FileIcon className="h-5 w-5 text-white" />
-                            </div>
-
-                            <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-sm truncate text-foreground">
-                                {file.originalName}
-                              </p>
-                              {file.newName && (
-                                <p className="text-xs text-muted-foreground mt-1 font-medium">
-                                  Сохранено как {file.newName}
-                                </p>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <Checkbox
-                                checked={selected.has(file.uid)}
-                                onCheckedChange={() =>
-                                  toggleSelection(file.uid)
-                                }
-                              />
-                              {category !== "Unclassified" && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => downloadFile(file)}
-                                  className="hover:scale-105 transition-all duration-300"
-                                >
-                                  <Download className="h-4 w-4" />
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => {
-                                  setFileToDelete(file);
-                                  setDeleteDialogOpen(true);
-                                }}
-                                className="hover:scale-105 transition-all duration-300 hover:text-red-600 h-10 w-10"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+            {Object.entries(groupedFiles).map(([category, categoryFiles]) => (
+              <FileGroup
+                key={category}
+                category={category}
+                categoryFiles={categoryFiles}
+                onDownloadFile={downloadFile}
+                onToggle={toggleSelection}
+                selectedSet={selected}
+                onDeleteDialog={openDeleteDialogForFile}
+              />
+            ))}
 
             <div className="text-center">
               <Button variant="outline" onClick={reset}>

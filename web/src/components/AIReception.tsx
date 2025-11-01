@@ -1,4 +1,3 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ClipboardList,
   CloudUpload,
@@ -20,12 +19,14 @@ import {
   Trash2,
   User,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Progress } from "@/components/ui/progress";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import type { DropzoneHandle } from "@/components/kibo-ui/dropzone";
+import {
+  Dropzone,
+  DropzoneContent,
+  DropzoneEmptyState,
+} from "@/components/kibo-ui/dropzone";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,13 +37,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { toast } from "sonner";
-import {
-  Dropzone,
-  DropzoneContent,
-  DropzoneEmptyState,
-} from "@/components/kibo-ui/dropzone";
-import type { DropzoneHandle } from "@/components/kibo-ui/dropzone";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 
 // Types
 interface UploadedFile {
@@ -586,7 +586,7 @@ export default function AIReceptionApp() {
         };
 
         const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          name
+          name,
         )}&lastname=${encodeURIComponent(lastName)}`;
         const filesResponse = await fetch(filesUrl).catch(() => null);
         let persisted: UploadedFile[] = [];
@@ -621,7 +621,7 @@ export default function AIReceptionApp() {
         setIsLoading(false);
       }
     },
-    [isLoading, name, lastName]
+    [isLoading, name, lastName],
   );
 
   const handleDrop = useCallback(
@@ -649,7 +649,7 @@ export default function AIReceptionApp() {
 
       uploadFiles(acceptedFiles);
     },
-    [isFormValid, uploadFiles]
+    [isFormValid, uploadFiles],
   );
 
   const pickFiles = useCallback(() => {
@@ -675,9 +675,9 @@ export default function AIReceptionApp() {
 
       try {
         const url = `${getBackendOrigin()}/files/${encodeURIComponent(
-          file.id
+          file.id,
         )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
-          lastName
+          lastName,
         )}`;
         const response = await fetch(url, { method: "DELETE" });
 
@@ -692,13 +692,13 @@ export default function AIReceptionApp() {
         }
 
         const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          name
+          name,
         )}&lastname=${encodeURIComponent(lastName)}`;
         const filesResponse = await fetch(filesUrl);
         if (!filesResponse.ok) {
           console.error(
             "Failed to fetch files list after delete",
-            filesResponse.status
+            filesResponse.status,
           );
           return;
         }
@@ -709,16 +709,16 @@ export default function AIReceptionApp() {
         console.error("Delete failed:", error);
       }
     },
-    [name, lastName]
+    [name, lastName],
   );
 
   const downloadFile = useCallback(
     (file: UploadedFile) => {
       if (!file.id) return;
       const url = `${getBackendOrigin()}/files/${encodeURIComponent(
-        file.id
+        file.id,
       )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
-        lastName
+        lastName,
       )}`;
       const a = document.createElement("a");
       a.href = url;
@@ -729,12 +729,12 @@ export default function AIReceptionApp() {
       a.click();
       a.remove();
     },
-    [name, lastName]
+    [name, lastName],
   );
 
   const downloadAll = useCallback(() => {
     const url = `${getBackendOrigin()}/download_zip?name=${encodeURIComponent(
-      name
+      name,
     )}&lastname=${encodeURIComponent(lastName)}`;
     const a = document.createElement("a");
     a.href = url;
@@ -781,12 +781,15 @@ export default function AIReceptionApp() {
   }, []);
 
   const groupedFiles = React.useMemo(() => {
-    return files.reduce((acc, file) => {
-      const categoryKey = normalizeCategoryKey(file.category);
-      if (!acc[categoryKey]) acc[categoryKey] = [];
-      acc[categoryKey].push(file);
-      return acc;
-    }, {} as Record<string, UploadedFile[]>);
+    return files.reduce(
+      (acc, file) => {
+        const categoryKey = normalizeCategoryKey(file.category);
+        if (!acc[categoryKey]) acc[categoryKey] = [];
+        acc[categoryKey].push(file);
+        return acc;
+      },
+      {} as Record<string, UploadedFile[]>,
+    );
   }, [files]);
 
   const openDeleteDialogForFile = useCallback((file: UploadedFile) => {

@@ -35,7 +35,7 @@ const renderBytes = (bytes: number) => {
 };
 
 const DropzoneContext = createContext<DropzoneContextType | undefined>(
-  undefined
+  undefined,
 );
 
 export type DropzoneProps = Omit<DropzoneOptions, "onDrop"> & {
@@ -44,7 +44,7 @@ export type DropzoneProps = Omit<DropzoneOptions, "onDrop"> & {
   onDrop?: (
     acceptedFiles: File[],
     fileRejections: FileRejection[],
-    event: DropEvent
+    event: DropEvent,
   ) => void;
   children?: ReactNode;
 };
@@ -68,7 +68,7 @@ export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
       children,
       ...props
     }: DropzoneProps,
-    ref
+    ref,
   ) => {
     const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -147,7 +147,7 @@ export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
           className={cn(
             "relative h-auto w-full flex-col items-center justify-center overflow-hidden p-6 sm:p-8 rounded-lg",
             isDragActive && "outline-none ring-1 ring-ring",
-            className
+            className,
           )}
           aria-disabled={disabled}
           role="button"
@@ -165,7 +165,7 @@ export const Dropzone = forwardRef<DropzoneHandle, DropzoneProps>(
         </div>
       </DropzoneContext.Provider>
     );
-  }
+  },
 );
 
 Dropzone.displayName = "Dropzone";
@@ -209,7 +209,7 @@ export const DropzoneContent = ({
       <p className="my-2 w-full truncate font-medium text-sm">
         {src.length > maxLabelItems
           ? `${new Intl.ListFormat("ru").format(
-              src.slice(0, maxLabelItems).map((file) => file.name)
+              src.slice(0, maxLabelItems).map((file) => file.name),
             )} и ещё ${src.length - maxLabelItems}`
           : new Intl.ListFormat("ru").format(src.map((file) => file.name))}
       </p>

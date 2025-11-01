@@ -523,6 +523,12 @@ export default function AIReceptionApp() {
   const [name, setName] = useState("");
   const [lastName, setLastName] = useState("");
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  // Keep track of the name/lastname that were used to fetch the current
+  // `files` list. This prevents accidental 403s when the user edits the
+  // input fields but then operates on files that were fetched for a
+  // different (previous) name/lastname.
+  const [queriedName, setQueriedName] = useState<string | null>(null);
+  const [queriedLastName, setQueriedLastName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -586,7 +592,7 @@ export default function AIReceptionApp() {
         };
 
         const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          name,
+          name
         )}&lastname=${encodeURIComponent(lastName)}`;
         const filesResponse = await fetch(filesUrl).catch(() => null);
         let persisted: UploadedFile[] = [];
@@ -603,6 +609,11 @@ export default function AIReceptionApp() {
           ...returned,
           ...persisted.filter((p) => !returned.some((r) => r.uid === p.uid)),
         ];
+
+        // Remember which name/lastname we used to obtain the current file
+        // list so subsequent delete/download requests use the same values.
+        setQueriedName(name);
+        setQueriedLastName(lastName);
 
         setFiles(merged as UploadedFile[]);
         try {
@@ -621,7 +632,7 @@ export default function AIReceptionApp() {
         setIsLoading(false);
       }
     },
-    [isLoading, name, lastName],
+    [isLoading, name, lastName]
   );
 
   const handleDrop = useCallback(
@@ -649,7 +660,7 @@ export default function AIReceptionApp() {
 
       uploadFiles(acceptedFiles);
     },
-    [isFormValid, uploadFiles],
+    [isFormValid, uploadFiles]
   );
 
   const pickFiles = useCallback(() => {
@@ -674,10 +685,13 @@ export default function AIReceptionApp() {
       }
 
       try {
+        const useName = queriedName ?? name;
+        const useLast = queriedLastName ?? lastName;
+
         const url = `${getBackendOrigin()}/files/${encodeURIComponent(
-          file.id,
-        )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
-          lastName,
+          file.id
+        )}?name=${encodeURIComponent(useName)}&lastname=${encodeURIComponent(
+          useLast
         )}`;
         const response = await fetch(url, { method: "DELETE" });
 
@@ -692,13 +706,13 @@ export default function AIReceptionApp() {
         }
 
         const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          name,
-        )}&lastname=${encodeURIComponent(lastName)}`;
+          useName
+        )}&lastname=${encodeURIComponent(useLast)}`;
         const filesResponse = await fetch(filesUrl);
         if (!filesResponse.ok) {
           console.error(
             "Failed to fetch files list after delete",
-            filesResponse.status,
+            filesResponse.status
           );
           return;
         }
@@ -709,16 +723,19 @@ export default function AIReceptionApp() {
         console.error("Delete failed:", error);
       }
     },
-    [name, lastName],
+    [name, lastName, queriedName, queriedLastName]
   );
 
   const downloadFile = useCallback(
     (file: UploadedFile) => {
       if (!file.id) return;
+      const useName = queriedName ?? name;
+      const useLast = queriedLastName ?? lastName;
+
       const url = `${getBackendOrigin()}/files/${encodeURIComponent(
-        file.id,
-      )}?name=${encodeURIComponent(name)}&lastname=${encodeURIComponent(
-        lastName,
+        file.id
+      )}?name=${encodeURIComponent(useName)}&lastname=${encodeURIComponent(
+        useLast
       )}`;
       const a = document.createElement("a");
       a.href = url;
@@ -729,13 +746,16 @@ export default function AIReceptionApp() {
       a.click();
       a.remove();
     },
-    [name, lastName],
+    [name, lastName, queriedName, queriedLastName]
   );
 
   const downloadAll = useCallback(() => {
+    const useName = queriedName ?? name;
+    const useLast = queriedLastName ?? lastName;
+
     const url = `${getBackendOrigin()}/download_zip?name=${encodeURIComponent(
-      name,
-    )}&lastname=${encodeURIComponent(lastName)}`;
+      useName
+    )}&lastname=${encodeURIComponent(useLast)}`;
     const a = document.createElement("a");
     a.href = url;
     a.target = "_blank";
@@ -781,15 +801,12 @@ export default function AIReceptionApp() {
   }, []);
 
   const groupedFiles = React.useMemo(() => {
-    return files.reduce(
-      (acc, file) => {
-        const categoryKey = normalizeCategoryKey(file.category);
-        if (!acc[categoryKey]) acc[categoryKey] = [];
-        acc[categoryKey].push(file);
-        return acc;
-      },
-      {} as Record<string, UploadedFile[]>,
-    );
+    return files.reduce((acc, file) => {
+      const categoryKey = normalizeCategoryKey(file.category);
+      if (!acc[categoryKey]) acc[categoryKey] = [];
+      acc[categoryKey].push(file);
+      return acc;
+    }, {} as Record<string, UploadedFile[]>);
   }, [files]);
 
   const openDeleteDialogForFile = useCallback((file: UploadedFile) => {

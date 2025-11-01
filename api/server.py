@@ -15,7 +15,7 @@ import uuid
 import zipfile
 from collections import defaultdict, deque
 from collections.abc import AsyncGenerator
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     tesseract_timeout: int = Field(default=30, gt=0)
     tesseract_psm: int = Field(default=4, ge=0, le=13)
     pdf_dpi: int = Field(default=200, gt=0, le=300)
+    pdf_parallel_pages: int = Field(default=4, gt=0, le=10)
 
     model_config = ConfigDict(env_prefix="APP_", case_sensitive=False)
 
@@ -372,7 +373,7 @@ def extract_text_from_path(path: str, ext: str) -> str:
 
 
 def _extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extract text from PDF bytes"""
+    """Extract text from PDF bytes with parallel page processing"""
     try:
         images = convert_from_bytes(
             file_bytes,
@@ -381,19 +382,44 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
             dpi=settings.pdf_dpi,  # Configurable DPI for performance
         )
 
-        texts = []
-        total_length = 0
+        if not images:
+            return ""
 
-        for image in images:
-            text = extract_text_from_image(image)
-            texts.append(text)
-            total_length += len(text)
+        # Process pages in parallel using ThreadPoolExecutor
+        # Tesseract releases GIL, so threads work well here
+        max_workers = min(
+            settings.pdf_parallel_pages, len(images), os.cpu_count() or 1
+        )
 
-            # Stop if we have enough text
-            if total_length >= settings.max_text_extract_length:
-                break
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all pages for OCR
+            future_to_idx = {
+                executor.submit(extract_text_from_image, img): idx
+                for idx, img in enumerate(images)
+            }
 
-        return "\n".join(texts)[: settings.max_text_extract_length]
+            # Collect results in order
+            texts = [""] * len(images)
+            total_length = 0
+
+            # Process completed futures as they finish
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    text = future.result()
+                    texts[idx] = text
+                    total_length += len(text)
+
+                    # Could potentially stop early, but we want all submitted
+                    # jobs to complete to avoid resource issues
+                except Exception:
+                    logger.exception("Failed to extract text from page %d", idx + 1)
+                    texts[idx] = ""
+
+        # Filter out empty texts and join
+        combined = "\n".join(t for t in texts if t)
+        return combined[: settings.max_text_extract_length]
+
     except Exception:
         logger.exception("PDF text extraction failed")
         return ""

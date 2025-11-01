@@ -3,7 +3,9 @@ Modern OCR-based document classification with parallel processing
 """
 
 import asyncio
+import hashlib
 import io
+import json
 import logging
 import os
 import re
@@ -37,7 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_bytes
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageFilter, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings
 from rapidfuzz import fuzz
@@ -53,16 +55,20 @@ class Settings(BaseSettings):
     max_file_size: int = Field(default=50 * 1024 * 1024, gt=0)
     max_workers: int = Field(default=min(4, os.cpu_count() or 1), gt=0)
     upload_folder: Path = Field(default=Path("uploads"))
+    cache_folder: Path = Field(default=Path("cache"))
     web_build_folder: Path = Field(default=Path("build/web"))
     max_pages_ocr: int = Field(default=10, gt=0, le=50)
-    image_max_size: int = Field(default=2000, gt=0)
+    image_max_size: int = Field(default=1800, gt=0)
     log_level: str = Field(default="INFO")
     max_file_age_days: int = Field(default=30, gt=0)
+    cache_ttl_days: int = Field(default=7, gt=0)
     cleanup_interval_seconds: int = Field(default=3600, gt=0)
     rate_limit_per_minute: int = Field(default=30, gt=0)
     max_files_per_upload: int = Field(default=20, gt=0)
     max_text_extract_length: int = Field(default=5000, gt=0)
     tesseract_timeout: int = Field(default=30, gt=0)
+    tesseract_psm: int = Field(default=4, ge=0, le=13)
+    pdf_dpi: int = Field(default=200, gt=0, le=300)
 
     model_config = ConfigDict(env_prefix="APP_", case_sensitive=False)
 
@@ -320,7 +326,7 @@ def extract_text_from_image(img: Image.Image) -> str:
     """Extract text from a PIL Image using Tesseract"""
     try:
         optimized = optimize_image(img)
-        config = "--psm 3 --oem 1"
+        config = f"--psm {settings.tesseract_psm} --oem 1"
         text = pytesseract.image_to_string(
             optimized, lang="rus", config=config, timeout=settings.tesseract_timeout
         )
@@ -372,7 +378,7 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
             file_bytes,
             first_page=1,
             last_page=settings.max_pages_ocr,
-            dpi=200,  # Better quality
+            dpi=settings.pdf_dpi,  # Configurable DPI for performance
         )
 
         texts = []
@@ -441,6 +447,110 @@ def classify_text(text: str) -> DocumentCategory:
                 best_category = category
 
     return best_category if best_score >= 60 else DocumentCategory.UNCLASSIFIED
+
+
+# ============================================================================
+# CACHE MANAGEMENT
+# ============================================================================
+
+
+def compute_file_hash(file_bytes: bytes) -> str:
+    """Compute SHA256 hash of file bytes for cache key"""
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+def get_cache_path(file_hash: str) -> Path:
+    """Get cache file path for a given file hash"""
+    # Use subdirectories to avoid too many files in one directory
+    subdir = file_hash[:2]
+    return settings.cache_folder / subdir / f"{file_hash}.json"
+
+
+async def get_cached_result(file_hash: str) -> dict | None:
+    """Retrieve cached OCR result if available and not expired"""
+    cache_path = get_cache_path(file_hash)
+
+    if not cache_path.exists():
+        return None
+
+    try:
+        # Check if cache is expired
+        mtime = cache_path.stat().st_mtime
+        age_days = (time.time() - mtime) / 86400
+        if age_days > settings.cache_ttl_days:
+            logger.debug("Cache expired for hash %s", file_hash[:8])
+            cache_path.unlink(missing_ok=True)
+            return None
+
+        async with aiofiles.open(cache_path, encoding="utf-8") as f:
+            content = await f.read()
+            result = json.loads(content)
+            logger.info("Cache hit for hash %s", file_hash[:8])
+            return result
+    except Exception:
+        logger.exception("Failed to read cache for hash %s", file_hash[:8])
+        return None
+
+
+async def save_cached_result(file_hash: str, text: str, category: str) -> None:
+    """Save OCR result to cache"""
+    cache_path = get_cache_path(file_hash)
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cache_data = {
+            "text": text,
+            "category": category,
+            "timestamp": time.time(),
+        }
+
+        async with aiofiles.open(cache_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(cache_data, ensure_ascii=False))
+
+        logger.debug("Cached result for hash %s", file_hash[:8])
+    except Exception:
+        logger.exception("Failed to save cache for hash %s", file_hash[:8])
+
+
+async def cleanup_cache() -> int:
+    """Remove expired cache entries"""
+    if not settings.cache_folder.exists():
+        return 0
+
+    cutoff = time.time() - settings.cache_ttl_days * 24 * 3600
+    removed = 0
+
+    try:
+        for subdir in settings.cache_folder.iterdir():
+            if not subdir.is_dir():
+                continue
+
+            for cache_file in subdir.iterdir():
+                if not cache_file.is_file() or cache_file.suffix != ".json":
+                    continue
+
+                try:
+                    mtime = cache_file.stat().st_mtime
+                    if mtime < cutoff:
+                        cache_file.unlink()
+                        removed += 1
+                except OSError:
+                    logger.exception(
+                        "Failed to check/remove cache file: %s", cache_file
+                    )
+
+            # Remove empty subdirectories
+            with suppress(OSError):
+                if not any(subdir.iterdir()):
+                    subdir.rmdir()
+    except Exception:
+        logger.exception("Cache cleanup error")
+
+    if removed:
+        logger.info("Cache cleanup removed %d expired entries", removed)
+
+    return removed
 
 
 def _find_uuid_and_pos(stem: str) -> tuple[str | None, int | None]:
@@ -620,32 +730,56 @@ async def process_single_file(
     lastname: str,
     executor: ProcessPoolExecutor,
 ) -> ProcessedFile | None:
-    """Process a single uploaded file: OCR, classify, and store"""
+    """Process a single uploaded file: OCR, classify, and store with caching"""
     original_name, tmp_path = file_data
     ext = Path(original_name).suffix.lower()
 
     try:
-        # Read file bytes FIRST (before any async operations)
+        # Read file bytes for hashing and potential storage
         async with aiofiles.open(tmp_path, "rb") as afp:
             file_bytes = await afp.read()
 
-        # Now safe to delete temp file - we have the bytes
-        with suppress(Exception):
-            tmp_path.unlink(missing_ok=True)
-
-        loop = asyncio.get_event_loop()
-        text = await loop.run_in_executor(executor, extract_text, file_bytes, ext)
-
-        category = classify_text(text)
         file_id = str(uuid.uuid4())
         size = len(file_bytes)
         modified = int(time.time())
+
+        # Compute hash for cache lookup
+        file_hash = compute_file_hash(file_bytes)
+        cached_result = await get_cached_result(file_hash)
+
+        if cached_result:
+            # Cache hit - use cached text and category
+            text = cached_result.get("text", "")
+            category_value = cached_result.get(
+                "category", DocumentCategory.UNCLASSIFIED.value
+            )
+            try:
+                category = DocumentCategory(category_value)
+            except ValueError:
+                category = DocumentCategory.UNCLASSIFIED
+            logger.info(
+                "Using cached result for %s (hash: %s)", original_name, file_hash[:8]
+            )
+        else:
+            # Cache miss - perform OCR using path-based worker (no pickle overhead)
+            loop = asyncio.get_event_loop()
+            text = await loop.run_in_executor(
+                executor, extract_text_from_path, str(tmp_path), ext
+            )
+            category = classify_text(text)
+
+            # Save to cache for future use
+            await save_cached_result(file_hash, text, category.value)
+
+        # Clean up temp file now that we have the bytes and OCR is done
+        with suppress(Exception):
+            tmp_path.unlink(missing_ok=True)
 
         filename = ""
         status = "unclassified"
 
         if category != DocumentCategory.UNCLASSIFIED:
-            # Filename format: {name}_{lastname}_{category.value}_{idx}_{timestamp}{ext}
+            # Filename format: {name}_{lastname}_{category.value}_{idx}_{file_id}{ext}
             sanitized_name = sanitize_name(name)
             sanitized_lastname = sanitize_name(lastname)
 
@@ -683,6 +817,9 @@ async def process_single_file(
 
     except Exception as exc:
         logger.exception("Failed to process file: %s", original_name)
+        # Clean up temp file on error
+        with suppress(Exception):
+            tmp_path.unlink(missing_ok=True)
         # Return error info instead of None for better error reporting
         return ProcessedFile(
             id=str(uuid.uuid4()),
@@ -732,6 +869,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan: startup and shutdown"""
     # Startup
     settings.upload_folder.mkdir(parents=True, exist_ok=True)
+    settings.cache_folder.mkdir(parents=True, exist_ok=True)
 
     app.state.rate_limiter = RateLimiter(settings.rate_limit_per_minute)
     # For CPU-bound OCR work prefer processes. Cap to number of CPUs.
@@ -745,6 +883,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             try:
                 await asyncio.sleep(settings.cleanup_interval_seconds)
                 await cleanup_old_files()
+                await cleanup_cache()
                 await app.state.rate_limiter.cleanup_old_entries()
             except asyncio.CancelledError:
                 break

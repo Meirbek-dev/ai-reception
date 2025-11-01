@@ -9,6 +9,7 @@ count.txt
 .nitro
 .tanstack
 .wrangler
+cache
 
 # Miscellaneous
 *.class

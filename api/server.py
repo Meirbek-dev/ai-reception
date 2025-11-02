@@ -21,7 +21,8 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from types import TracebackType
+from typing import Annotated, Self
 from urllib.parse import quote as _quote
 
 import aiofiles
@@ -39,7 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_bytes
-from PIL import Image, ImageFilter, UnidentifiedImageError
+from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings
 from rapidfuzz import fuzz
@@ -54,6 +55,8 @@ class Settings(BaseSettings):
 
     max_file_size: int = Field(default=50 * 1024 * 1024, gt=0)
     max_workers: int = Field(default=min(4, os.cpu_count() or 1), gt=0)
+    max_tasks_per_child: int = Field(default=100, gt=0)
+    upload_chunk_size: int = Field(default=64 * 1024, gt=0, le=4 * 1024 * 1024)
     upload_folder: Path = Field(default=Path("uploads"))
     cache_folder: Path = Field(default=Path("cache"))
     web_build_folder: Path = Field(default=Path("build/web"))
@@ -69,7 +72,7 @@ class Settings(BaseSettings):
     tesseract_timeout: int = Field(default=30, gt=0)
     tesseract_psm: int = Field(default=4, ge=0, le=13)
     pdf_dpi: int = Field(default=200, gt=0, le=300)
-    pdf_parallel_pages: int = Field(default=4, gt=0, le=10)
+    pdf_parallel_pages: int = Field(default=8, gt=0, le=16)
 
     model_config = ConfigDict(env_prefix="APP_", case_sensitive=False)
 
@@ -274,6 +277,33 @@ class RateLimiter:
 
 
 # ============================================================================
+# TIMING UTILITIES
+# ============================================================================
+
+
+class PerfTimer:
+    """Context manager that logs how long an operation takes in milliseconds."""
+
+    def __init__(self, label: str, level: int = logging.INFO) -> None:
+        self.label = label
+        self.level = level
+        self._start = 0.0
+
+    def __enter__(self) -> Self:
+        self._start = time.perf_counter()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        duration_ms = (time.perf_counter() - self._start) * 1000
+        logger.log(self.level, "Timing[%s]: %.2f ms", self.label, duration_ms)
+
+
+# ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
 
@@ -323,14 +353,42 @@ def optimize_image(img: Image.Image, max_size: int | None = None) -> Image.Image
     return img
 
 
+def _tesseract_config() -> str:
+    """Return cached tesseract CLI configuration string"""
+
+    return f"--psm {settings.tesseract_psm} --oem 1"
+
+
+def preprocess_for_ocr(img: Image.Image) -> Image.Image:
+    """Lightweight grayscale + contrast tweak to cut OCR time"""
+
+    if img.mode != "L":
+        img = ImageOps.grayscale(img)
+    # Median filter helps suppress speckle noise before thresholding
+    return ImageOps.autocontrast(img.filter(ImageFilter.MedianFilter(size=3)))
+
+
 def extract_text_from_image(img: Image.Image) -> str:
     """Extract text from a PIL Image using Tesseract"""
     try:
-        optimized = optimize_image(img)
-        config = f"--psm {settings.tesseract_psm} --oem 1"
-        text = pytesseract.image_to_string(
-            optimized, lang="rus", config=config, timeout=settings.tesseract_timeout
-        )
+        with PerfTimer(
+            f"optimize_image {img.width}x{img.height}",
+            level=logging.DEBUG,
+        ):
+            optimized = optimize_image(img)
+
+        optimized = preprocess_for_ocr(optimized)
+        config = _tesseract_config()
+
+        with PerfTimer(
+            f"pytesseract_image_to_string {optimized.width}x{optimized.height}"
+        ):
+            text = pytesseract.image_to_string(
+                optimized,
+                lang="rus",
+                config=config,
+                timeout=settings.tesseract_timeout,
+            )
         return text[: settings.max_text_extract_length]
     except pytesseract.TesseractError:
         logger.exception("Tesseract OCR failed")
@@ -342,13 +400,18 @@ def extract_text_from_image(img: Image.Image) -> str:
 
 def extract_text(file_bytes: bytes, ext: str) -> str:
     """Extract text from file bytes (PDF or image)"""
+    result = ""
     try:
-        if ext == ".pdf":
-            return _extract_text_from_pdf(file_bytes)
-        return _extract_text_from_image_bytes(file_bytes)
+        with PerfTimer(f"extract_text total ({ext})"):
+            if ext == ".pdf":
+                result = _extract_text_from_pdf(file_bytes)
+            else:
+                result = _extract_text_from_image_bytes(file_bytes)
     except Exception:
         logger.exception("Text extraction failed for extension %s", ext)
         return ""
+    else:
+        return result
 
 
 def extract_text_from_path(path: str, ext: str) -> str:
@@ -357,11 +420,20 @@ def extract_text_from_path(path: str, ext: str) -> str:
     This avoids pickling large byte buffers when sending work to a
     ProcessPoolExecutor: we send the filename and let the worker read it.
     """
+    result = ""
+    label = f"extract_text_from_path total - {Path(path).name}"
     try:
-        p = Path(path)
-        with p.open("rb") as f:
-            data = f.read()
-        return extract_text(data, ext)
+        with PerfTimer(label):
+            p = Path(path)
+            with (
+                PerfTimer(
+                    f"read_bytes {p.name}",
+                    level=logging.DEBUG,
+                ),
+                p.open("rb") as f,
+            ):
+                data = f.read()
+            result = extract_text(data, ext)
     except Exception:
         # Use a plain print here because child processes may have different
         # logging config; still call logger for consistency.
@@ -370,28 +442,35 @@ def extract_text_from_path(path: str, ext: str) -> str:
         except Exception:
             print(f"Failed to extract text from path {path}")
         return ""
+    else:
+        return result
 
 
 def _extract_text_from_pdf(file_bytes: bytes) -> str:
     """Extract text from PDF bytes with parallel page processing"""
     try:
-        images = convert_from_bytes(
-            file_bytes,
-            first_page=1,
-            last_page=settings.max_pages_ocr,
-            dpi=settings.pdf_dpi,  # Configurable DPI for performance
-        )
+        with PerfTimer(
+            f"convert_from_bytes {len(file_bytes)} bytes",
+            level=logging.INFO,
+        ):
+            images = convert_from_bytes(
+                file_bytes,
+                first_page=1,
+                last_page=settings.max_pages_ocr,
+                dpi=settings.pdf_dpi,
+            )
 
         if not images:
             return ""
 
         # Process pages in parallel using ThreadPoolExecutor
         # Tesseract releases GIL, so threads work well here
-        max_workers = min(
-            settings.pdf_parallel_pages, len(images), os.cpu_count() or 1
-        )
+        max_workers = min(settings.pdf_parallel_pages, len(images), os.cpu_count() or 1)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with (
+            PerfTimer(f"pdf ocr threadpool {len(images)} pages"),
+            ThreadPoolExecutor(max_workers=max_workers) as executor,
+        ):
             # Submit all pages for OCR
             future_to_idx = {
                 executor.submit(extract_text_from_image, img): idx
@@ -446,33 +525,34 @@ def classify_text(text: str) -> DocumentCategory:
 
     Returns DocumentCategory.UNCLASSIFIED when no keyword matches.
     """
-    if not text:
-        return DocumentCategory.UNCLASSIFIED
+    with PerfTimer(f"classify_text len={len(text)}", level=logging.DEBUG):
+        if not text:
+            return DocumentCategory.UNCLASSIFIED
 
-    lower_text = text.strip().lower()
+        lower_text = text.strip().lower()
 
-    # Fast exact containment check
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        for kw in keywords:
-            if kw and kw.lower() in lower_text:
-                return category
+        # Fast exact containment check
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            for kw in keywords:
+                if kw and kw.lower() in lower_text:
+                    return category
 
-    # Fuzzy fallback — compute best score and category
-    best_category = DocumentCategory.UNCLASSIFIED
-    best_score = 0
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        for kw in keywords:
-            if not kw:
-                continue
-            try:
-                score = fuzz.token_set_ratio(kw.lower(), lower_text)
-            except Exception:
-                score = 0
-            if score > best_score:
-                best_score = score
-                best_category = category
+        # Fuzzy fallback — compute best score and category
+        best_category = DocumentCategory.UNCLASSIFIED
+        best_score = 0
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            for kw in keywords:
+                if not kw:
+                    continue
+                try:
+                    score = fuzz.token_set_ratio(kw.lower(), lower_text)
+                except Exception:
+                    score = 0
+                if score > best_score:
+                    best_score = score
+                    best_category = category
 
-    return best_category if best_score >= 60 else DocumentCategory.UNCLASSIFIED
+        return best_category if best_score >= 60 else DocumentCategory.UNCLASSIFIED
 
 
 # ============================================================================
@@ -718,20 +798,21 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
     tmp_path = Path(tmp_path_str)
     total_size = 0
     try:
-        async with aiofiles.open(tmp_path, "wb") as afp:
-            while chunk := await upload_file.read(8192):
-                total_size += len(chunk)
-                if total_size > settings.max_file_size:
-                    # cleanup and signal payload too large
-                    tmp_path.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=413,
-                        detail=(
-                            f"File {upload_file.filename} exceeds "
-                            f"{settings.max_file_size} bytes"
-                        ),
-                    )
-                await afp.write(chunk)
+        with PerfTimer(f"save_upload_to_temp {upload_file.filename}"):
+            async with aiofiles.open(tmp_path, "wb") as afp:
+                while chunk := await upload_file.read(settings.upload_chunk_size):
+                    total_size += len(chunk)
+                    if total_size > settings.max_file_size:
+                        # cleanup and signal payload too large
+                        tmp_path.unlink(missing_ok=True)
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                f"File {upload_file.filename} exceeds "
+                                f"{settings.max_file_size} bytes"
+                            ),
+                        )
+                    await afp.write(chunk)
     except HTTPException:
         # propagate HTTP errors raised above
         raise
@@ -750,7 +831,7 @@ async def save_upload_to_temp(upload_file: UploadFile) -> tuple[str, Path] | Non
         return (upload_file.filename, tmp_path)
 
 
-async def process_single_file(
+async def process_single_file(  # noqa: PLR0915
     file_data: tuple[str, Path],
     name: str,
     lastname: str,
@@ -759,87 +840,123 @@ async def process_single_file(
     """Process a single uploaded file: OCR, classify, and store with caching"""
     original_name, tmp_path = file_data
     ext = Path(original_name).suffix.lower()
+    process_label = f"process_single_file {original_name}"
 
     try:
-        # Read file bytes for hashing and potential storage
-        async with aiofiles.open(tmp_path, "rb") as afp:
-            file_bytes = await afp.read()
+        with PerfTimer(process_label):
+            # Read file bytes for hashing and potential storage
+            async with aiofiles.open(tmp_path, "rb") as afp:
+                with PerfTimer(
+                    f"read_tmp_file {original_name}",
+                    level=logging.DEBUG,
+                ):
+                    file_bytes = await afp.read()
 
-        file_id = str(uuid.uuid4())
-        size = len(file_bytes)
-        modified = int(time.time())
+            file_id = str(uuid.uuid4())
+            size = len(file_bytes)
+            modified = int(time.time())
 
-        # Compute hash for cache lookup
-        file_hash = compute_file_hash(file_bytes)
-        cached_result = await get_cached_result(file_hash)
+            # Compute hash for cache lookup
+            with PerfTimer(
+                f"compute_hash {original_name}",
+                level=logging.DEBUG,
+            ):
+                file_hash = compute_file_hash(file_bytes)
 
-        if cached_result:
-            # Cache hit - use cached text and category
-            text = cached_result.get("text", "")
-            category_value = cached_result.get(
-                "category", DocumentCategory.UNCLASSIFIED.value
-            )
-            try:
-                category = DocumentCategory(category_value)
-            except ValueError:
-                category = DocumentCategory.UNCLASSIFIED
-            logger.info(
-                "Using cached result for %s (hash: %s)", original_name, file_hash[:8]
-            )
-        else:
-            # Cache miss - perform OCR using path-based worker (no pickle overhead)
-            loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(
-                executor, extract_text_from_path, str(tmp_path), ext
-            )
-            category = classify_text(text)
+            with PerfTimer(
+                f"cache_lookup {file_hash[:8]}",
+                level=logging.DEBUG,
+            ):
+                cached_result = await get_cached_result(file_hash)
 
-            # Save to cache for future use
-            await save_cached_result(file_hash, text, category.value)
-
-        # Clean up temp file now that we have the bytes and OCR is done
-        with suppress(Exception):
-            tmp_path.unlink(missing_ok=True)
-
-        filename = ""
-        status = "unclassified"
-
-        if category != DocumentCategory.UNCLASSIFIED:
-            # Filename format: {name}_{lastname}_{category.value}_{idx}_{file_id}{ext}
-            sanitized_name = sanitize_name(name)
-            sanitized_lastname = sanitize_name(lastname)
-
-            idx = 1
-            while idx <= 100:  # Reasonable limit
-                candidate = (
-                    f"{sanitized_name}_{sanitized_lastname}_"
-                    f"{category.value}_{idx}_{file_id}{ext}"
+            if cached_result:
+                # Cache hit - use cached text and category
+                text = cached_result.get("text", "")
+                category_value = cached_result.get(
+                    "category", DocumentCategory.UNCLASSIFIED.value
                 )
-                dest = settings.upload_folder / candidate
-                if not dest.exists():
-                    filename = candidate
-                    await write_atomic(dest, file_bytes)
-                    status = "saved"
-                    logger.info("Saved file: %s as %s", original_name, category.value)
-                    break
-                idx += 1
+                try:
+                    category = DocumentCategory(category_value)
+                except ValueError:
+                    category = DocumentCategory.UNCLASSIFIED
+                logger.info(
+                    "Using cached result for %s (hash: %s)",
+                    original_name,
+                    file_hash[:8],
+                )
             else:
-                logger.error(
-                    "Too many file collisions for %s_%s",
-                    sanitized_name,
-                    sanitized_lastname,
-                )
-                return None
+                # Cache miss - perform OCR using path-based worker (no pickle overhead)
+                loop = asyncio.get_event_loop()
+                with PerfTimer(
+                    f"ocr_executor {original_name}",
+                ):
+                    text = await loop.run_in_executor(
+                        executor, extract_text_from_path, str(tmp_path), ext
+                    )
+                category = classify_text(text)
 
-        return ProcessedFile(
-            id=file_id,
-            original_name=original_name,
-            category=category.value,
-            filename=filename,
-            size=size,
-            modified=modified,
-            status=status,
-        )
+                # Save to cache for future use
+                with PerfTimer(
+                    f"cache_save {file_hash[:8]}",
+                    level=logging.DEBUG,
+                ):
+                    await save_cached_result(file_hash, text, category.value)
+
+            # Clean up temp file now that we have the bytes and OCR is done
+            with (
+                suppress(Exception),
+                PerfTimer(
+                    f"cleanup_tmp {original_name}",
+                    level=logging.DEBUG,
+                ),
+            ):
+                tmp_path.unlink(missing_ok=True)
+
+            filename = ""
+            status = "unclassified"
+
+            if category != DocumentCategory.UNCLASSIFIED:
+                # Filename format: {name}_{lastname}_{category.value}_{idx}_{file_id}{ext}
+                sanitized_name = sanitize_name(name)
+                sanitized_lastname = sanitize_name(lastname)
+
+                idx = 1
+                while idx <= 100:  # Reasonable limit
+                    candidate = (
+                        f"{sanitized_name}_{sanitized_lastname}_"
+                        f"{category.value}_{idx}_{file_id}{ext}"
+                    )
+                    dest = settings.upload_folder / candidate
+                    if not dest.exists():
+                        filename = candidate
+                        with PerfTimer(
+                            f"write_atomic {candidate}",
+                            level=logging.DEBUG,
+                        ):
+                            await write_atomic(dest, file_bytes)
+                        status = "saved"
+                        logger.info(
+                            "Saved file: %s as %s", original_name, category.value
+                        )
+                        break
+                    idx += 1
+                else:
+                    logger.error(
+                        "Too many file collisions for %s_%s",
+                        sanitized_name,
+                        sanitized_lastname,
+                    )
+                    return None
+
+            return ProcessedFile(
+                id=file_id,
+                original_name=original_name,
+                category=category.value,
+                filename=filename,
+                size=size,
+                modified=modified,
+                status=status,
+            )
 
     except Exception as exc:
         logger.exception("Failed to process file: %s", original_name)
@@ -901,7 +1018,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # For CPU-bound OCR work prefer processes. Cap to number of CPUs.
     cpu_count = os.cpu_count() or 1
     max_workers = max(1, min(settings.max_workers, cpu_count))
-    app.state.executor = ProcessPoolExecutor(max_workers=max_workers)
+    app.state.executor = ProcessPoolExecutor(
+        max_workers=max_workers,
+        max_tasks_per_child=settings.max_tasks_per_child,
+    )
 
     # Background cleanup task
     async def cleanup_loop() -> None:
@@ -1328,12 +1448,15 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "5040"))
     host = os.getenv("HOST", "0.0.0.0")  # noqa: S104
-    fastapi_env = os.getenv("FASTAPI_ENV", os.getenv("ENVIRONMENT", "production"))
+
+    env = os.getenv("ENVIRONMENT", "production")
+    is_prod = str(env).lower() == "production"
+    reload_enabled = not is_prod
 
     uvicorn.run(
         app,
         host=host,
         port=port,
-        reload=fastapi_env != "production",
+        reload=reload_enabled,
         log_level=settings.log_level.lower(),
     )

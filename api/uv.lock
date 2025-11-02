@@ -25,13 +25,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=25.1.0" },
-    { name = "fastapi", extras = ["standard-no-fastapi-cloud-cli"], specifier = ">=0.120.0" },
+    { name = "fastapi", extras = ["standard-no-fastapi-cloud-cli"], specifier = ">=0.120.4" },
     { name = "pdf2image", specifier = ">=1.17.0" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "pydantic", specifier = ">=2.12.3" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },
     { name = "pytesseract", specifier = ">=0.3.13" },
-    { name = "rapidfuzz", specifier = ">=3.14.1" },
+    { name = "rapidfuzz", specifier = ">=3.14.3" },
 ]
 
 [package.metadata.requires-dev]

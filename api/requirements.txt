@@ -1,9 +1,8 @@
 aiofiles>=25.1.0
-fastapi[standard-no-fastapi-cloud-cli]>=0.120.0
+fastapi[standard-no-fastapi-cloud-cli]>=0.120.4
 pdf2image>=1.17.0
 pillow>=12.0.0
 pydantic>=2.12.3
 pydantic-settings>=2.11.0
 pytesseract>=0.3.13
-rapidfuzz>=3.14.1
-uvicorn[standard]>=0.22.0
+rapidfuzz>=3.14.3

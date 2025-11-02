@@ -13,7 +13,7 @@ services:
       - uploads:/app/uploads
     environment:
       - TESSDATA_PREFIX=/usr/share/tessdata/
-      - FASTAPI_ENV=production
+      - ENVIRONMENT=production
       - UVICORN_HOST=0.0.0.0
       - UVICORN_WORKERS=4
     healthcheck:

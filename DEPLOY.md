@@ -82,7 +82,7 @@ docker compose up -d --build --remove-orphans
 
 ```pwsh
 # on server
-curl -f http://127.0.0.1:5040/healthz
+curl -f http://127.0.0.1:5040/health
 ```
 
 4. Configure nginx to proxy requests for `ai-reception.tou.edu.kz` to `127.0.0.1:5040` using the provided `nginx.conf` as a starting point.
@@ -324,7 +324,7 @@ sudo certbot --nginx -d ai-reception.tou.edu.kz
 1. Verify health
 
 ```bash
-curl -I https://ai-reception.tou.edu.kz/healthz
+curl -I https://ai-reception.tou.edu.kz/health
 ```
 
 1. Optional: systemd unit (auto-start on boot)
@@ -363,7 +363,7 @@ sudo systemctl enable --now ai-reception.service
 - The backend uses Tesseract and pdf2image (CPU-bound). No GPU is required.
 - With many CPU threads and plenty of RAM, tune `UVICORN_WORKERS` upward carefully and monitor memory with `docker stats` and `htop`.
 - If uploads are large, increase `client_max_body_size` in nginx.
-- If the container healthcheck fails, inspect logs: `sudo docker logs ai-reception` and check the `/healthz` route.
+- If the container healthcheck fails, inspect logs: `sudo docker logs ai-reception` and check the `/health` route.
 - To change workers after deployment: restart compose with the desired env value: `UVICORN_WORKERS=24 sudo docker compose up -d --build`.
 
 If you'd like, I can add a small `scripts/` folder that wraps build/copy/start steps and a sample systemd unit pre-filled with computed workers.

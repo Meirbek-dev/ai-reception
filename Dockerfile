@@ -82,5 +82,5 @@ USER appuser
 
 EXPOSE 5040
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5040", "--workers", "4"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5040", "--workers", "8"]
 

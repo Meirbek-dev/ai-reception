@@ -15,7 +15,7 @@ services:
       - TESSDATA_PREFIX=/usr/share/tessdata/
       - ENVIRONMENT=production
       - UVICORN_HOST=0.0.0.0
-      - UVICORN_WORKERS=4
+      - UVICORN_WORKERS=8
     healthcheck:
       # Check the JSON health endpoint and also ensure the web root responds (index.html)
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:5040/health || exit 1 && curl -fsS http://127.0.0.1:5040/ || true"]

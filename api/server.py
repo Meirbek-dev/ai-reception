@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     """Application settings with validation"""
 
     max_file_size: int = Field(default=50 * 1024 * 1024, gt=0)
-    max_workers: int = Field(default=min(4, os.cpu_count() or 1), gt=0)
+    max_workers: int = Field(default=min(8, os.cpu_count() or 1), gt=0)
     max_tasks_per_child: int = Field(default=100, gt=0)
     upload_chunk_size: int = Field(default=64 * 1024, gt=0, le=4 * 1024 * 1024)
     upload_folder: Path = Field(default=Path("uploads"))

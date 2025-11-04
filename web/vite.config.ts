@@ -11,7 +11,11 @@ export default defineConfig({
       target: "react",
       autoCodeSplitting: true,
     }),
-    viteReact(),
+    viteReact({
+      babel: {
+        plugins: ['babel-plugin-react-compiler'],
+      },
+    }),
     tailwindcss(),
   ],
   build: {
@@ -32,6 +36,7 @@ export default defineConfig({
       "/icons": "http://localhost:5040",
       "/health": "http://localhost:5040",
       "/download": "http://localhost:5040",
+      "/auth": "http://localhost:5040",
     },
   },
 });

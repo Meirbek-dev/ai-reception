@@ -11,6 +11,7 @@ services:
     # Persist uploads using a named volume (keeps uploads safe across rebuilds)
     volumes:
       - uploads:/app/uploads
+      - dbdata:/app/data
     environment:
       - TESSDATA_PREFIX=/usr/share/tessdata/
       - ENVIRONMENT=production
@@ -32,3 +33,5 @@ networks:
 volumes:
   uploads:
     name: ai_reception_uploads
+  dbdata:
+    name: ai_reception_db

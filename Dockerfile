@@ -75,8 +75,8 @@ COPY --from=python-builder /app /app
 # Copy built frontend into place to be served by the Python app
 COPY --from=frontend-builder /workspace/web/dist /app/build/web
 
-# Ensure uploads directory exists and is writable
-RUN mkdir -p /app/uploads && chown -R appuser:appuser /app/uploads /app
+# Ensure uploads and data directories exist and are writable
+RUN mkdir -p /app/uploads /app/data && chown -R appuser:appuser /app/uploads /app/data /app
 
 USER appuser
 

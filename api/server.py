@@ -41,52 +41,23 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_bytes
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic import BaseModel
 from rapidfuzz import fuzz
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
-
-class Settings(BaseSettings):
-    """Application settings with validation"""
-
-    max_file_size: int = Field(default=50 * 1024 * 1024, gt=0)
-    max_workers: int = Field(default=min(8, os.cpu_count() or 1), gt=0)
-    max_tasks_per_child: int = Field(default=100, gt=0)
-    upload_chunk_size: int = Field(default=64 * 1024, gt=0, le=4 * 1024 * 1024)
-    upload_folder: Path = Field(default=Path("uploads"))
-    cache_folder: Path = Field(default=Path("cache"))
-    web_build_folder: Path = Field(default=Path("build/web"))
-    max_pages_ocr: int = Field(default=10, gt=0, le=50)
-    image_max_size: int = Field(default=1800, gt=0)
-    log_level: str = Field(default="INFO")
-    max_file_age_days: int = Field(default=30, gt=0)
-    cache_ttl_days: int = Field(default=7, gt=0)
-    cleanup_interval_seconds: int = Field(default=3600, gt=0)
-    rate_limit_per_minute: int = Field(default=30, gt=0)
-    max_files_per_upload: int = Field(default=20, gt=0)
-    max_text_extract_length: int = Field(default=5000, gt=0)
-    tesseract_timeout: int = Field(default=30, gt=0)
-    tesseract_psm: int = Field(default=4, ge=0, le=13)
-    pdf_dpi: int = Field(default=200, gt=0, le=300)
-    pdf_parallel_pages: int = Field(default=8, gt=0, le=16)
-
-    model_config = ConfigDict(env_prefix="APP_", case_sensitive=False)
-
-    @field_validator("log_level")
-    @classmethod
-    def validate_log_level(cls, v: str) -> str:
-        valid = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-        if v.upper() not in valid:
-            msg = f"log_level must be one of {valid}"
-            raise ValueError(msg)
-        return v.upper()
-
-
-settings = Settings()
+import auth
+from config import settings
+from database import (
+    close_engine,
+    get_session,
+    get_sessionmaker,
+    init_engine,
+    run_migrations,
+)
+from document_service import (
+    DocumentMetadata,
+    compute_confidence_score,
+    persist_document,
+)
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -187,6 +158,8 @@ class ProcessedFile(BaseModel):
     size: int
     modified: int
     status: str
+    confidence: float = 0.0
+    db_id: str | None = None  # Database document ID
 
 
 def processed_file_to_client(p: ProcessedFile) -> dict:
@@ -208,6 +181,8 @@ def processed_file_to_client(p: ProcessedFile) -> dict:
         "size": p.size,
         "modified": p.modified,
         "status": p.status,
+        "confidence": p.confidence,
+        "dbId": p.db_id,
         "uid": uid,
     }
 
@@ -518,16 +493,18 @@ def _extract_text_from_image_bytes(file_bytes: bytes) -> str:
 
 
 @lru_cache(maxsize=256)
-def classify_text(text: str) -> DocumentCategory:
+def classify_text(text: str) -> tuple[DocumentCategory, float | None]:
     """Classify text using a fast exact containment check first, then
     a fuzzy-match fallback. Caching is enabled to avoid repeated work for
     identical OCR results.
 
-    Returns DocumentCategory.UNCLASSIFIED when no keyword matches.
+    Returns tuple of (DocumentCategory, fuzzy_score).
+    fuzzy_score is None for exact matches, or 0-100 for fuzzy matches.
+    Returns (DocumentCategory.UNCLASSIFIED, 0) when no keyword matches.
     """
     with PerfTimer(f"classify_text len={len(text)}", level=logging.DEBUG):
         if not text:
-            return DocumentCategory.UNCLASSIFIED
+            return (DocumentCategory.UNCLASSIFIED, 0.0)
 
         lower_text = text.strip().lower()
 
@@ -535,7 +512,7 @@ def classify_text(text: str) -> DocumentCategory:
         for category, keywords in CATEGORY_KEYWORDS.items():
             for kw in keywords:
                 if kw and kw.lower() in lower_text:
-                    return category
+                    return (category, None)  # Exact match, high confidence
 
         # Fuzzy fallback — compute best score and category
         best_category = DocumentCategory.UNCLASSIFIED
@@ -552,7 +529,9 @@ def classify_text(text: str) -> DocumentCategory:
                     best_score = score
                     best_category = category
 
-        return best_category if best_score >= 60 else DocumentCategory.UNCLASSIFIED
+        if best_score >= 60:
+            return (best_category, float(best_score))
+        return (DocumentCategory.UNCLASSIFIED, 0.0)
 
 
 # ============================================================================
@@ -598,7 +577,9 @@ async def get_cached_result(file_hash: str) -> dict | None:
         return None
 
 
-async def save_cached_result(file_hash: str, text: str, category: str) -> None:
+async def save_cached_result(
+    file_hash: str, text: str, category: str, fuzzy_score: float | None = None
+) -> None:
     """Save OCR result to cache"""
     cache_path = get_cache_path(file_hash)
 
@@ -608,6 +589,7 @@ async def save_cached_result(file_hash: str, text: str, category: str) -> None:
         cache_data = {
             "text": text,
             "category": category,
+            "fuzzy_score": fuzzy_score,
             "timestamp": time.time(),
         }
 
@@ -869,12 +851,14 @@ async def process_single_file(  # noqa: PLR0915
             ):
                 cached_result = await get_cached_result(file_hash)
 
+            fuzzy_score = None
             if cached_result:
                 # Cache hit - use cached text and category
                 text = cached_result.get("text", "")
                 category_value = cached_result.get(
                     "category", DocumentCategory.UNCLASSIFIED.value
                 )
+                fuzzy_score = cached_result.get("fuzzy_score")
                 try:
                     category = DocumentCategory(category_value)
                 except ValueError:
@@ -893,14 +877,16 @@ async def process_single_file(  # noqa: PLR0915
                     text = await loop.run_in_executor(
                         executor, extract_text_from_path, str(tmp_path), ext
                     )
-                category = classify_text(text)
+                category, fuzzy_score = classify_text(text)
 
                 # Save to cache for future use
                 with PerfTimer(
                     f"cache_save {file_hash[:8]}",
                     level=logging.DEBUG,
                 ):
-                    await save_cached_result(file_hash, text, category.value)
+                    await save_cached_result(
+                        file_hash, text, category.value, fuzzy_score
+                    )
 
             # Clean up temp file now that we have the bytes and OCR is done
             with (
@@ -912,8 +898,12 @@ async def process_single_file(  # noqa: PLR0915
             ):
                 tmp_path.unlink(missing_ok=True)
 
+            # Compute confidence score
+            confidence = compute_confidence_score(category.value, text, fuzzy_score)
+
             filename = ""
             status = "unclassified"
+            db_id = None
 
             if category != DocumentCategory.UNCLASSIFIED:
                 # Filename format: {name}_{lastname}_{category.value}_{idx}_{file_id}{ext}
@@ -948,6 +938,33 @@ async def process_single_file(  # noqa: PLR0915
                     )
                     return None
 
+                # Persist to database
+                mime_type = (
+                    f"application/{ext[1:]}" if ext == ".pdf" else f"image/{ext[1:]}"
+                )
+                try:
+                    async for session in get_session():
+                        metadata = DocumentMetadata(
+                            original_name=original_name,
+                            file_path=str(
+                                dest.relative_to(settings.upload_folder.parent)
+                            ),
+                            file_size=size,
+                            mime_type=mime_type,
+                            category=category.value,
+                            confidence_score=confidence,
+                            text_excerpt=text[:500] if text else None,
+                        )
+                        doc = await persist_document(session, metadata)
+                        await session.commit()
+                        db_id = doc.id
+                        logger.info("Persisted document to database: %s", db_id)
+                except Exception:
+                    logger.exception(
+                        "Failed to persist document %s to database", original_name
+                    )
+                    # Don't fail the upload, just log the error
+
             return ProcessedFile(
                 id=file_id,
                 original_name=original_name,
@@ -956,6 +973,8 @@ async def process_single_file(  # noqa: PLR0915
                 size=size,
                 modified=modified,
                 status=status,
+                confidence=confidence,
+                db_id=db_id,
             )
 
     except Exception as exc:
@@ -972,6 +991,8 @@ async def process_single_file(  # noqa: PLR0915
             size=0,
             modified=int(time.time()),
             status=f"error: {str(exc)[:100]}",
+            confidence=0.0,
+            db_id=None,
         )
 
 
@@ -1013,6 +1034,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Startup
     settings.upload_folder.mkdir(parents=True, exist_ok=True)
     settings.cache_folder.mkdir(parents=True, exist_ok=True)
+    await run_migrations()
+    init_engine()
+    app.state.db_session_factory = get_sessionmaker()
 
     app.state.rate_limiter = RateLimiter(settings.rate_limit_per_minute)
     # For CPU-bound OCR work prefer processes. Cap to number of CPUs.
@@ -1047,6 +1071,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         await app.state.cleanup_task
 
     app.state.executor.shutdown(wait=True)
+    await close_engine()
     logger.info("Application shutdown complete")
 
 
@@ -1059,11 +1084,23 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:5040",  # Backend port (for serving frontend)
+        "https://ai-reception.tou.edu.kz",  # Production domain
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(auth.router)
+
+# Import review router after app is created to avoid circular imports
+import review  # noqa: E402
+
+app.include_router(review.router)
 
 
 # ============================================================================
@@ -1458,5 +1495,5 @@ if __name__ == "__main__":
         host=host,
         port=port,
         reload=reload_enabled,
-        log_level=settings.log_level.lower(),
+        # log_level=settings.log_level.lower(),
     )

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 import type { DropzoneHandle } from "@/components/kibo-ui/dropzone";
 import {
   Dropzone,
@@ -152,9 +153,13 @@ const THEME_KEY = "ai_reception_theme";
 const HeaderBar = React.memo(function HeaderBar({
   isDark,
   toggleDark,
+  user,
+  onLogout,
 }: {
   isDark: boolean;
   toggleDark: () => void;
+  user: { email: string; role: string } | null;
+  onLogout: () => void;
 }) {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
@@ -180,7 +185,26 @@ const HeaderBar = React.memo(function HeaderBar({
             </h1>
           </div>
 
-          <div className="flex items-center justify-end">
+          <div className="flex items-center gap-2 justify-end">
+            {user && (
+              <>
+                <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground mr-2">
+                  <User className="h-4 w-4" />
+                  <span className="font-medium">{user.email}</span>
+                  <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                    {user.role}
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onLogout}
+                  className="text-sm"
+                >
+                  Выход
+                </Button>
+              </>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -506,6 +530,8 @@ const FileGroup = React.memo(function FileGroup({
 });
 
 export default function AIReceptionApp() {
+  const { user, logout } = useAuth();
+
   const [isDark, setIsDark] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(THEME_KEY);
@@ -764,7 +790,12 @@ export default function AIReceptionApp() {
     document.body.appendChild(a);
     a.click();
     a.remove();
-  }, [name, lastName]);
+  }, [
+	name,
+	lastName,
+	queriedName,
+	queriedLastName
+]);
 
   const toggleSelection = useCallback((uid: string) => {
     setSelected((prev) => {
@@ -814,9 +845,18 @@ export default function AIReceptionApp() {
     setDeleteDialogOpen(true);
   }, []);
 
+  const handleLogout = useCallback(async () => {
+    try {
+      await logout();
+      toast.success("Вы вышли из системы");
+    } catch {
+      toast.error("Ошибка при выходе");
+    }
+  }, [logout]);
+
   return (
     <div className="min-h-screen bg-background dark:bg-background transition-colors">
-      <HeaderBar isDark={isDark} toggleDark={toggleDark} />
+      <HeaderBar isDark={isDark} toggleDark={toggleDark} user={user} onLogout={handleLogout} />
 
       <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         <FormCard

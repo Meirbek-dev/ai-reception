@@ -1,0 +1,391 @@
+"""Review queue API endpoints for HITL workflow."""
+
+from __future__ import annotations
+
+import base64
+import io
+import logging
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from auth import get_current_user, require_role
+from config import settings
+from database import get_session
+from models import DocumentStatus, ReviewAction, User, UserRole
+from review_service import (
+    claim_document,
+    get_document_audit_trail,
+    get_document_by_id,
+    get_review_queue,
+    release_document,
+    resolve_document,
+)
+
+logger = logging.getLogger(__name__)
+
+# Create router with /admin prefix
+router = APIRouter(prefix="/admin", tags=["review"])
+
+
+# Response models
+class DocumentResponse(BaseModel):
+    """Document in review queue."""
+
+    id: int
+    original_name: str
+    stored_filename: str
+    applicant_name: str
+    applicant_lastname: str
+    category_predicted: str
+    category_confidence: float
+    category_final: str | None
+    status: str
+    assigned_reviewer_id: int | None
+    uploaded_at: str
+    updated_at: str
+    text_excerpt: str | None = None
+
+    @classmethod
+    def from_orm(cls, document) -> DocumentResponse:
+        """Convert ORM model to response."""
+        return cls(
+            id=document.id,
+            original_name=document.original_name,
+            stored_filename=document.stored_filename,
+            applicant_name=document.applicant_name,
+            applicant_lastname=document.applicant_lastname,
+            category_predicted=document.category_predicted,
+            category_confidence=document.category_confidence,
+            category_final=document.category_final,
+            status=document.status.value,
+            assigned_reviewer_id=document.assigned_reviewer_id,
+            uploaded_at=document.uploaded_at.isoformat(),
+            updated_at=document.updated_at.isoformat(),
+            text_excerpt=(
+                document.text_content[0].text_excerpt if document.text_content else None
+            ),
+        )
+
+
+class ReviewActionResponse(BaseModel):
+    """Review action for audit trail."""
+
+    id: int
+    document_id: int
+    reviewer_email: str
+    action: str
+    from_category: str | None
+    to_category: str | None
+    comment: str | None
+    duration_seconds: int | None
+    created_at: str
+
+    @classmethod
+    def from_orm(cls, action: ReviewAction) -> ReviewActionResponse:
+        """Convert ORM model to response."""
+        return cls(
+            id=action.id,
+            document_id=action.document_id,
+            reviewer_email=action.reviewer.email if action.reviewer else "unknown",
+            action=action.action.value,
+            from_category=action.from_category,
+            to_category=action.to_category,
+            comment=action.comment,
+            duration_seconds=action.duration_seconds,
+            created_at=action.created_at.isoformat(),
+        )
+
+
+class ResolveRequest(BaseModel):
+    """Request to resolve a document."""
+
+    final_category: str = Field(..., min_length=1, max_length=100)
+    applicant_name: str | None = Field(None, max_length=200)
+    applicant_lastname: str | None = Field(None, max_length=200)
+    comment: str | None = Field(None, max_length=1000)
+
+
+class MessageResponse(BaseModel):
+    """Generic message response."""
+
+    message: str
+
+
+@router.get(
+    "/review-queue",
+    response_model=list[DocumentResponse],
+    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+)
+async def list_review_queue(
+    status: Annotated[DocumentStatus | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    session: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> list[DocumentResponse]:
+    """
+    List documents in review queue.
+
+    Requires reviewer role.
+    """
+    documents = await get_review_queue(
+        session=session,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return [DocumentResponse.from_orm(doc) for doc in documents]
+
+
+@router.post(
+    "/review-queue/{document_id}/claim",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def claim_document_endpoint(
+    document_id: int,
+    current_user: Annotated[User, Depends(require_role(UserRole.REVIEWER))],
+    session: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> DocumentResponse:
+    """
+    Claim a document for review.
+
+    Changes status from QUEUED to IN_REVIEW and assigns to current reviewer.
+    """
+    try:
+        document = await claim_document(
+            session=session,
+            document_id=document_id,
+            reviewer=current_user,
+        )
+        return DocumentResponse.from_orm(document)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+@router.post(
+    "/review-queue/{document_id}/release",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def release_document_endpoint(
+    document_id: int,
+    current_user: Annotated[User, Depends(require_role(UserRole.REVIEWER))],
+    session: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> DocumentResponse:
+    """
+    Release a claimed document back to queue.
+
+    Changes status from IN_REVIEW to QUEUED and unassigns reviewer.
+    """
+    try:
+        document = await release_document(
+            session=session,
+            document_id=document_id,
+            reviewer=current_user,
+        )
+        return DocumentResponse.from_orm(document)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+@router.post(
+    "/review-queue/{document_id}/resolve",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def resolve_document_endpoint(
+    document_id: int,
+    resolve_request: ResolveRequest,
+    current_user: Annotated[User, Depends(require_role(UserRole.REVIEWER))],
+    session: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> DocumentResponse:
+    """
+    Resolve a document review.
+
+    Changes status from IN_REVIEW to RESOLVED, records final category
+    and reviewer actions.
+    """
+    try:
+        document = await resolve_document(
+            session=session,
+            document_id=document_id,
+            reviewer=current_user,
+            final_category=resolve_request.final_category,
+            applicant_name=resolve_request.applicant_name,
+            applicant_lastname=resolve_request.applicant_lastname,
+            comment=resolve_request.comment,
+        )
+        return DocumentResponse.from_orm(document)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+@router.get(
+    "/documents/{document_id}",
+    response_model=DocumentResponse,
+    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+)
+async def get_document(
+    document_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> DocumentResponse:
+    """
+    Get document details by ID.
+
+    Requires reviewer role.
+    """
+    document = await get_document_by_id(session=session, document_id=document_id)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document {document_id} not found",
+        )
+    return DocumentResponse.from_orm(document)
+
+
+@router.get(
+    "/documents/{document_id}/audit",
+    response_model=list[ReviewActionResponse],
+    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+)
+async def get_document_audit(
+    document_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> list[ReviewActionResponse]:
+    """
+    Get audit trail for a document.
+
+    Returns all review actions ordered by creation time.
+    """
+    # Verify document exists
+    document = await get_document_by_id(session=session, document_id=document_id)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document {document_id} not found",
+        )
+
+    actions = await get_document_audit_trail(
+        session=session,
+        document_id=document_id,
+    )
+    return [ReviewActionResponse.from_orm(action) for action in actions]
+
+
+@router.get(
+    "/documents/{document_id}/preview",
+    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+)
+async def get_document_preview(
+    document_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> JSONResponse:
+    """
+    Get document preview (first page image for PDFs or text excerpt).
+
+    Returns JSON with either:
+    - image: base64-encoded image data
+    - text: text excerpt
+    - type: "image" or "text"
+    """
+    # Get document
+    document = await get_document_by_id(session=session, document_id=document_id)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document {document_id} not found",
+        )
+
+    file_path = settings.upload_folder / document.stored_filename
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document file not found on disk",
+        )
+
+    # Check file extension
+    ext = file_path.suffix.lower()
+
+    # For PDFs, try to render first page
+    if ext == ".pdf":
+        try:
+            # Lazy import to avoid loading heavy dependency unless needed
+            from pdf2image import convert_from_path  # noqa: PLC0415
+
+            # Convert first page only
+            images = convert_from_path(
+                str(file_path),
+                first_page=1,
+                last_page=1,
+                dpi=150,
+            )
+
+            if images:
+                # Convert to PNG bytes
+                buffer = io.BytesIO()
+                images[0].save(buffer, format="PNG")
+                image_bytes = buffer.getvalue()
+
+                # Encode as base64
+                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+                return JSONResponse(
+                    content={
+                        "type": "image",
+                        "image": f"data:image/png;base64,{image_b64}",
+                    }
+                )
+        except Exception as e:
+            msg = f"Failed to render PDF preview: {e}"
+            logger.warning(msg)
+            # Fall through to text preview
+
+    # For images, return base64
+    if ext in {".jpg", ".jpeg", ".png"}:
+        with file_path.open("rb") as f:
+            image_bytes = f.read()
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            mime_type = "image/jpeg" if ext in {".jpg", ".jpeg"} else "image/png"
+
+            return JSONResponse(
+                content={
+                    "type": "image",
+                    "image": f"data:{mime_type};base64,{image_b64}",
+                }
+            )
+
+    # Fallback to text excerpt if available
+    if document.text_content:
+        return JSONResponse(
+            content={
+                "type": "text",
+                "text": document.text_content[0].text_excerpt,
+            }
+        )
+
+    # No preview available
+    return JSONResponse(
+        content={
+            "type": "none",
+            "message": "No preview available for this document",
+        }
+    )
+
+
+__all__ = ["router"]

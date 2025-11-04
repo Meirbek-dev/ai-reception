@@ -6,13 +6,18 @@ readme = "README.md"
 requires-python = ">=3.14.0"
 dependencies = [
     "aiofiles>=25.1.0",
-    "fastapi[standard-no-fastapi-cloud-cli]>=0.120.4",
+    "aiosqlite>=0.21.0",
+    "alembic>=1.17.1",
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.121.0",
+    "itsdangerous>=2.2.0",
+    "bcrypt>=5.0.0",
     "pdf2image>=1.17.0",
     "pillow>=12.0.0",
     "pydantic>=2.12.3",
     "pydantic-settings>=2.11.0",
     "pytesseract>=0.3.13",
     "rapidfuzz>=3.14.3",
+    "sqlalchemy>=2.0.44",
 ]
 
 [dependency-groups]

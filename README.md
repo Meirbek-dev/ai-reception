@@ -35,6 +35,17 @@ Notes and best-practices:
 - Healthcheck uses `/health` (FastAPI endpoint). The compose healthcheck and Dockerfile production HEALTHCHECK are aligned to `/health`.
 - If you want nginx to serve static assets directly, copy `api/build/web` onto the host and point nginx `root` to that directory; otherwise the FastAPI app will serve static files for the web UI.
 
+## Management CLI
+
+Create or update reviewer/admin accounts via the CLI:
+
+```bash
+cd api
+python -m manage create-admin --email admin@example.com
+```
+
+You'll be prompted for a password if `--password` is omitted.
+
 ### Using A Layout
 
 In the File Based Routing setup the layout is located in `src/routes/__root.tsx`. Anything you add to the root route will appear in all the routes. The route content will appear in the JSX where you use the `<Outlet />` component.

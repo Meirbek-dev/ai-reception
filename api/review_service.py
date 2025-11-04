@@ -36,7 +36,7 @@ async def get_review_queue(
     Returns:
         List of documents with their text content loaded
     """
-    query = select(Document).options(selectinload(Document.text_content))
+    query = select(Document).options(selectinload(Document.text))
 
     # Default to queued documents if no status specified
     if status is None:
@@ -45,7 +45,7 @@ async def get_review_queue(
         query = query.where(Document.status == status)
 
     # Order by upload time (oldest first for fairness)
-    query = query.order_by(Document.uploaded_at.asc())
+    query = query.order_by(Document.created_at.asc())
     query = query.limit(limit).offset(offset)
 
     result = await session.execute(query)
@@ -322,7 +322,7 @@ async def get_document_by_id(
     result = await session.execute(
         select(Document)
         .options(
-            selectinload(Document.text_content),
+            selectinload(Document.text),
             selectinload(Document.assigned_reviewer),
         )
         .where(Document.id == document_id)

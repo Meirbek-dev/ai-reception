@@ -56,7 +56,7 @@ class DocumentResponse(BaseModel):
         return cls(
             id=document.id,
             original_name=document.original_name,
-            stored_filename=document.stored_filename,
+            stored_filename=document.stored_filename or "",
             applicant_name=document.applicant_name,
             applicant_lastname=document.applicant_lastname,
             category_predicted=document.category_predicted,
@@ -64,11 +64,9 @@ class DocumentResponse(BaseModel):
             category_final=document.category_final,
             status=document.status.value,
             assigned_reviewer_id=document.assigned_reviewer_id,
-            uploaded_at=document.uploaded_at.isoformat(),
+            uploaded_at=document.created_at.isoformat(),
             updated_at=document.updated_at.isoformat(),
-            text_excerpt=(
-                document.text_content[0].text_excerpt if document.text_content else None
-            ),
+            text_excerpt=(document.text.text_excerpt if document.text else None),
         )
 
 
@@ -119,7 +117,7 @@ class MessageResponse(BaseModel):
 @router.get(
     "/review-queue",
     response_model=list[DocumentResponse],
-    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+    dependencies=[Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))],
 )
 async def list_review_queue(
     status: Annotated[DocumentStatus | None, Query()] = None,
@@ -148,7 +146,9 @@ async def list_review_queue(
 )
 async def claim_document_endpoint(
     document_id: int,
-    current_user: Annotated[User, Depends(require_role(UserRole.REVIEWER))],
+    current_user: Annotated[
+        User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
+    ],
     session: Annotated[AsyncSession, Depends(get_session)] = None,
 ) -> DocumentResponse:
     """
@@ -177,7 +177,9 @@ async def claim_document_endpoint(
 )
 async def release_document_endpoint(
     document_id: int,
-    current_user: Annotated[User, Depends(require_role(UserRole.REVIEWER))],
+    current_user: Annotated[
+        User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
+    ],
     session: Annotated[AsyncSession, Depends(get_session)] = None,
 ) -> DocumentResponse:
     """
@@ -207,7 +209,9 @@ async def release_document_endpoint(
 async def resolve_document_endpoint(
     document_id: int,
     resolve_request: ResolveRequest,
-    current_user: Annotated[User, Depends(require_role(UserRole.REVIEWER))],
+    current_user: Annotated[
+        User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
+    ],
     session: Annotated[AsyncSession, Depends(get_session)] = None,
 ) -> DocumentResponse:
     """
@@ -237,7 +241,7 @@ async def resolve_document_endpoint(
 @router.get(
     "/documents/{document_id}",
     response_model=DocumentResponse,
-    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+    dependencies=[Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))],
 )
 async def get_document(
     document_id: int,
@@ -260,7 +264,7 @@ async def get_document(
 @router.get(
     "/documents/{document_id}/audit",
     response_model=list[ReviewActionResponse],
-    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+    dependencies=[Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))],
 )
 async def get_document_audit(
     document_id: int,
@@ -288,7 +292,7 @@ async def get_document_audit(
 
 @router.get(
     "/documents/{document_id}/preview",
-    dependencies=[Depends(require_role(UserRole.REVIEWER))],
+    dependencies=[Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))],
 )
 async def get_document_preview(
     document_id: int,

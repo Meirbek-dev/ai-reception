@@ -37,6 +37,7 @@ export default defineConfig({
       "/health": "http://localhost:5040",
       "/download": "http://localhost:5040",
       "/auth": "http://localhost:5040",
+      "/admin": "http://localhost:5040",
     },
   },
 });

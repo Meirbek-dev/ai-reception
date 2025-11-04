@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import * as reviewApi from "@/lib/review";
 import type { Document } from "@/lib/review";
 
@@ -32,8 +33,20 @@ const categoryNames: Record<string, string> = {
   MedSpravka: "Медицинская справка",
 };
 
+const getInitials = (email?: string) => {
+  if (!email) return "?";
+  const [local] = email.split("@");
+  const parts = local.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const source = parts.length ? parts : [local];
+  const initials = source
+    .slice(0, 2)
+    .map((segment) => segment[0])
+    .join("");
+  return initials.toUpperCase().slice(0, 2) || "?";
+};
+
 function ReviewQueuePage() {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
 
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -58,10 +71,10 @@ function ReviewQueuePage() {
 
   // Redirect if not authenticated
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!authLoading && !isAuthenticated) {
       navigate({ to: "/login" });
     }
-  }, [isAuthenticated, navigate]);
+  }, [authLoading, isAuthenticated, navigate]);
 
   // Load documents
   const loadDocuments = useCallback(async () => {
@@ -73,7 +86,7 @@ function ReviewQueuePage() {
       setDocuments(docs);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to load queue";
+        error instanceof Error ? error.message : "Не удалось загрузить очередь";
       toast.error(message);
     } finally {
       setIsLoading(false);
@@ -81,10 +94,10 @@ function ReviewQueuePage() {
   }, [filter]);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (!authLoading && isAuthenticated) {
       loadDocuments();
     }
-  }, [isAuthenticated, loadDocuments]);
+  }, [authLoading, isAuthenticated, loadDocuments]);
 
   // Load preview when document selected
   useEffect(() => {
@@ -94,7 +107,7 @@ function ReviewQueuePage() {
         .getDocumentPreview(selectedDoc.id)
         .then(setPreview)
         .catch((error) => {
-          console.error("Failed to load preview:", error);
+          console.error("Не удалось загрузить предпросмотр:", error);
           setPreview(null);
         })
         .finally(() => setIsLoadingPreview(false));
@@ -113,10 +126,10 @@ function ReviewQueuePage() {
       const updated = await reviewApi.claimDocument(doc.id);
       setDocuments((prev) => prev.map((d) => (d.id === doc.id ? updated : d)));
       setSelectedDoc(updated);
-      toast.success("Document claimed");
+      toast.success("Документ принят");
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to claim";
+        error instanceof Error ? error.message : "Не удалось принять документ";
       toast.error(message);
     }
   }, []);
@@ -132,10 +145,10 @@ function ReviewQueuePage() {
         if (selectedDoc?.id === doc.id) {
           setSelectedDoc(null);
         }
-        toast.success("Document released");
+        toast.success("Документ возвращён в очередь");
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Failed to release";
+          error instanceof Error ? error.message : "Не удалось вернуть документ в очередь";
         toast.error(message);
       }
     },
@@ -147,7 +160,7 @@ function ReviewQueuePage() {
     if (!selectedDoc) return;
 
     if (!finalCategory) {
-      toast.error("Please select a category");
+      toast.error("Пожалуйста, выберите категорию");
       return;
     }
 
@@ -163,11 +176,11 @@ function ReviewQueuePage() {
         prev.map((d) => (d.id === selectedDoc.id ? updated : d))
       );
       setSelectedDoc(null);
-      toast.success("Document resolved");
+      toast.success("Проверка завершена");
       await loadDocuments(); // Refresh queue
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to resolve";
+        error instanceof Error ? error.message : "Не удалось завершить проверку документа";
       toast.error(message);
     }
   }, [
@@ -193,13 +206,15 @@ function ReviewQueuePage() {
       if (!selectedDoc) return;
 
       switch (e.key.toLowerCase()) {
-        case "c": { // Claim
+        case "c": {
+          // Claim
           if (selectedDoc.status === "queued") {
             handleClaim(selectedDoc);
           }
           break;
         }
-        case "r": { // Release
+        case "r": {
+          // Release
           if (
             selectedDoc.status === "in_review" &&
             selectedDoc.assigned_reviewer_id === user?.id
@@ -208,7 +223,8 @@ function ReviewQueuePage() {
           }
           break;
         }
-        case "a": { // Accept (same category)
+        case "a": {
+          // Accept (same category)
           if (
             selectedDoc.status === "in_review" &&
             selectedDoc.assigned_reviewer_id === user?.id
@@ -218,7 +234,8 @@ function ReviewQueuePage() {
           }
           break;
         }
-        case "escape": { // Close detail
+        case "escape": {
+          // Close detail
           setSelectedDoc(null);
           break;
         }
@@ -246,7 +263,7 @@ function ReviewQueuePage() {
         return (
           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
             <Clock className="h-3 w-3" />
-            Queued
+            В очереди
           </span>
         );
       }
@@ -254,7 +271,7 @@ function ReviewQueuePage() {
         return (
           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
             <FileText className="h-3 w-3" />
-            In Review
+            На рассмотрении
           </span>
         );
       }
@@ -262,7 +279,7 @@ function ReviewQueuePage() {
         return (
           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
             <CheckCircle2 className="h-3 w-3" />
-            Resolved
+            Завершено
           </span>
         );
       }
@@ -298,8 +315,55 @@ function ReviewQueuePage() {
     );
   };
 
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
+
   if (!user) {
     return null;
+  }
+
+  const canReview = user.role === "reviewer" || user.role === "admin";
+
+  if (!canReview) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="border-b border-border bg-card shadow-sm">
+          <div className="mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex h-16 items-center justify-between">
+              <h1 className="text-xl font-semibold">Очередь на проверку</h1>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate({ to: "/" })}
+              >
+                Назад к загрузке
+              </Button>
+            </div>
+          </div>
+        </header>
+        <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 py-12">
+          <Card>
+            <CardContent className="py-10 text-center space-y-3">
+              <AlertCircle className="h-8 w-8 mx-auto text-destructive" />
+              <h2 className="text-lg font-semibold">Нет доступа</h2>
+              <p className="text-sm text-muted-foreground">
+                Эта страница доступна только рецензентам. Обратитесь к
+                администратору за правами доступа.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -308,17 +372,29 @@ function ReviewQueuePage() {
       <header className="border-b border-border bg-card shadow-sm sticky top-0 z-10">
         <div className="mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <h1 className="text-xl font-semibold">Review Queue</h1>
+            <h1 className="text-xl font-semibold">Очередь на проверку</h1>
             <div className="flex items-center gap-4">
-              <span className="text-sm text-muted-foreground">
-                {user.email} ({user.role})
-              </span>
+              <div className="hidden sm:flex items-center gap-3">
+                <Avatar className="size-9">
+                  <AvatarFallback className="text-xs font-semibold uppercase">
+                    {getInitials(user.email)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="leading-tight">
+                  <div className="text-sm font-medium text-foreground">
+                    {user.email}
+                  </div>
+                  <div className="text-xs uppercase text-muted-foreground">
+                    {user.role}
+                  </div>
+                </div>
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => navigate({ to: "/" })}
               >
-                Back to Upload
+                Назад к загрузке
               </Button>
             </div>
           </div>
@@ -332,7 +408,7 @@ function ReviewQueuePage() {
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>Documents ({filteredDocs.length})</CardTitle>
+                  <CardTitle>Документы ({filteredDocs.length})</CardTitle>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -348,10 +424,10 @@ function ReviewQueuePage() {
               <CardContent className="space-y-4">
                 {/* Filters */}
                 <div className="space-y-2">
-                  <Label htmlFor="search">Search</Label>
+                  <Label htmlFor="search">Поиск</Label>
                   <Input
                     id="search"
-                    placeholder="Name or filename..."
+                    placeholder="Имя или имя файла..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
@@ -363,21 +439,21 @@ function ReviewQueuePage() {
                     size="sm"
                     onClick={() => setFilter("queued")}
                   >
-                    Queued
+                    В очереди
                   </Button>
                   <Button
                     variant={filter === "in_review" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setFilter("in_review")}
                   >
-                    In Review
+                    На рассмотрении
                   </Button>
                   <Button
                     variant={filter === "all" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setFilter("all")}
                   >
-                    All
+                    Все
                   </Button>
                 </div>
 
@@ -418,7 +494,7 @@ function ReviewQueuePage() {
                   {filteredDocs.length === 0 && !isLoading && (
                     <div className="text-center py-8 text-muted-foreground">
                       <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>No documents found</p>
+                      <p>Документы не найдены</p>
                     </div>
                   )}
                 </div>
@@ -431,14 +507,14 @@ function ReviewQueuePage() {
             {selectedDoc ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>Document Review</CardTitle>
+                  <CardTitle>Проверка документа</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Document info */}
                   <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
                     <div>
                       <div className="text-sm text-muted-foreground">
-                        Status
+                        Статус
                       </div>
                       <div className="mt-1">
                         {getStatusBadge(selectedDoc.status)}
@@ -446,7 +522,7 @@ function ReviewQueuePage() {
                     </div>
                     <div>
                       <div className="text-sm text-muted-foreground">
-                        Confidence
+                        Уверенность
                       </div>
                       <div className="mt-1">
                         {getConfidenceBadge(selectedDoc.category_confidence)}
@@ -454,7 +530,7 @@ function ReviewQueuePage() {
                     </div>
                     <div>
                       <div className="text-sm text-muted-foreground">
-                        Original Name
+                        Исходное имя
                       </div>
                       <div className="mt-1 text-sm font-medium truncate">
                         {selectedDoc.original_name}
@@ -462,7 +538,7 @@ function ReviewQueuePage() {
                     </div>
                     <div>
                       <div className="text-sm text-muted-foreground">
-                        Uploaded
+                        Загружено
                       </div>
                       <div className="mt-1 text-sm">
                         {new Date(selectedDoc.uploaded_at).toLocaleString()}
@@ -479,7 +555,7 @@ function ReviewQueuePage() {
                     <div className="border rounded-lg overflow-hidden">
                       <img
                         src={preview.image}
-                        alt="Document preview"
+                        alt="Предпросмотр документа"
                         className="w-full max-h-96 object-contain bg-muted"
                       />
                     </div>
@@ -492,7 +568,7 @@ function ReviewQueuePage() {
                   ) : (
                     <div className="flex items-center justify-center h-32 bg-muted rounded-lg">
                       <p className="text-muted-foreground">
-                        No preview available
+                        Предпросмотр недоступен
                       </p>
                     </div>
                   )}
@@ -501,12 +577,12 @@ function ReviewQueuePage() {
                   {selectedDoc.status === "in_review" &&
                     selectedDoc.assigned_reviewer_id === user.id && (
                       <div className="space-y-4 p-4 border rounded-lg">
-                        <h3 className="font-medium">Review Document</h3>
+                        <h3 className="font-medium">Проверить документ</h3>
 
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <Label htmlFor="applicant_name">
-                              Applicant Name
+                              Имя заявителя
                             </Label>
                             <Input
                               id="applicant_name"
@@ -516,7 +592,7 @@ function ReviewQueuePage() {
                           </div>
                           <div>
                             <Label htmlFor="applicant_lastname">
-                              Applicant Lastname
+                              Фамилия заявителя
                             </Label>
                             <Input
                               id="applicant_lastname"
@@ -529,7 +605,9 @@ function ReviewQueuePage() {
                         </div>
 
                         <div>
-                          <Label htmlFor="final_category">Final Category</Label>
+                          <Label htmlFor="final_category">
+                            Итоговая категория
+                          </Label>
                           <select
                             id="final_category"
                             value={finalCategory}
@@ -547,32 +625,34 @@ function ReviewQueuePage() {
                         </div>
 
                         <div>
-                          <Label htmlFor="comment">Comment (optional)</Label>
+                          <Label htmlFor="comment">
+                            Комментарий (необязательно)
+                          </Label>
                           <textarea
                             id="comment"
                             value={comment}
                             onChange={(e) => setComment(e.target.value)}
                             className="flex min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            placeholder="Add any notes..."
+                            placeholder="Добавьте заметки..."
                           />
                         </div>
 
                         <div className="flex gap-2">
                           <Button onClick={handleResolve} className="flex-1">
                             <CheckCircle2 className="h-4 w-4 mr-2" />
-                            Resolve (Enter)
+                            Завершить (Enter)
                           </Button>
                           <Button
                             variant="outline"
                             onClick={() => handleRelease(selectedDoc)}
                           >
                             <XCircle className="h-4 w-4 mr-2" />
-                            Release (R)
+                            Вернуть (R)
                           </Button>
                         </div>
 
                         <div className="text-xs text-muted-foreground">
-                          Shortcuts: A=Accept • R=Release • Esc=Close
+                          Соч. клавиши: A=Принять • R=Вернуть • Esc=Закрыть
                         </div>
                       </div>
                     )}
@@ -585,7 +665,7 @@ function ReviewQueuePage() {
                         className="flex-1"
                       >
                         <FileText className="h-4 w-4 mr-2" />
-                        Claim Document (C)
+                        Принять документ (C)
                       </Button>
                     </div>
                   )}
@@ -594,10 +674,10 @@ function ReviewQueuePage() {
                   {selectedDoc.status === "resolved" && (
                     <div className="p-4 bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-lg">
                       <p className="text-sm text-green-800 dark:text-green-400">
-                        This document has been resolved.
+                        Этот документ был обработан.
                         {selectedDoc.category_final && (
                           <span className="ml-2 font-medium">
-                            Final category:{" "}
+                            Итоговая категория:{" "}
                             {categoryNames[selectedDoc.category_final] ||
                               selectedDoc.category_final}
                           </span>
@@ -612,9 +692,9 @@ function ReviewQueuePage() {
                 <CardContent className="flex items-center justify-center h-96">
                   <div className="text-center text-muted-foreground">
                     <FileText className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                    <p>Select a document to review</p>
+                    <p>Выберите документ для проверки</p>
                     <p className="text-sm mt-2">
-                      Click on a document from the queue
+                      Нажмите на документ в очереди
                     </p>
                   </div>
                 </CardContent>

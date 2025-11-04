@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import * as authApi from "@/lib/auth";
 import type { User } from "@/lib/auth";
 
@@ -25,6 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(currentUser);
       } catch (error) {
         console.error("Failed to initialize auth:", error);
+        console.error("Не удалось инициализировать аутентификацию:", error);
         setUser(null);
       } finally {
         setIsLoading(false);

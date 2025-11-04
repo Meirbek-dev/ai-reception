@@ -252,7 +252,7 @@ async def get_document(
     if not document:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document {document_id} not found",
+            detail=f"Документ {document_id} не найден",
         )
     return DocumentResponse.from_orm(document)
 
@@ -276,7 +276,7 @@ async def get_document_audit(
     if not document:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document {document_id} not found",
+            detail=f"Документ {document_id} не найден",
         )
 
     actions = await get_document_audit_trail(
@@ -307,7 +307,7 @@ async def get_document_preview(
     if not document:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document {document_id} not found",
+            detail=f"Документ {document_id} не найден",
         )
 
     file_path = settings.upload_folder / document.stored_filename
@@ -315,7 +315,7 @@ async def get_document_preview(
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document file not found on disk",
+            detail="Файл документа не найден на диске",
         )
 
     # Check file extension
@@ -351,9 +351,9 @@ async def get_document_preview(
                     }
                 )
         except Exception as e:
-            msg = f"Failed to render PDF preview: {e}"
+            msg = f"Не удалось отобразить предпросмотр PDF: {e}"
             logger.warning(msg)
-            # Fall through to text preview
+            # Падаем к текстовому предпросмотру
 
     # For images, return base64
     if ext in {".jpg", ".jpeg", ".png"}:
@@ -383,7 +383,7 @@ async def get_document_preview(
     return JSONResponse(
         content={
             "type": "none",
-            "message": "No preview available for this document",
+            "message": "Предпросмотр недоступен для этого документа",
         }
     )
 

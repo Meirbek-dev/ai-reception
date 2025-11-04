@@ -76,15 +76,15 @@ async def claim_document(
     document = result.scalar_one_or_none()
 
     if not document:
-        msg = f"Document {document_id} not found"
+        msg = f"Документ {document_id} не найден"
         raise ValueError(msg)
 
     if document.status != DocumentStatus.QUEUED:
-        msg = f"Document {document_id} cannot be claimed (status: {document.status.value})"
+        msg = f"Документ {document_id} не может быть принят (статус: {document.status.value})"
         raise ValueError(msg)
 
     if document.assigned_reviewer_id is not None:
-        msg = f"Document {document_id} is already claimed"
+        msg = f"Документ {document_id} уже принят другим рецензентом"
         raise ValueError(msg)
 
     # Claim document
@@ -108,7 +108,7 @@ async def claim_document(
     await session.refresh(document)
 
     logger.info(
-        f"Document {document_id} claimed by reviewer {reviewer.id} ({reviewer.email})"
+        f"Документ {document_id} принят рецензентом {reviewer.id} ({reviewer.email})"
     )
 
     return document
@@ -138,17 +138,17 @@ async def release_document(
     document = result.scalar_one_or_none()
 
     if not document:
-        msg = f"Document {document_id} not found"
+        msg = f"Документ {document_id} не найден"
         raise ValueError(msg)
 
     if document.status != DocumentStatus.IN_REVIEW:
         msg = (
-            f"Document {document_id} is not in review (status: {document.status.value})"
+            f"Документ {document_id} не находится в обработке (статус: {document.status.value})"
         )
         raise ValueError(msg)
 
     if document.assigned_reviewer_id != reviewer.id:
-        msg = f"Document {document_id} is not claimed by this reviewer"
+        msg = f"Документ {document_id} не закреплён за этим рецензентом"
         raise ValueError(msg)
 
     # Release document
@@ -172,7 +172,7 @@ async def release_document(
     await session.refresh(document)
 
     logger.info(
-        f"Document {document_id} released by reviewer {reviewer.id} ({reviewer.email})"
+        f"Документ {document_id} возвращён в очередь рецензентом {reviewer.id} ({reviewer.email})"
     )
 
     return document
@@ -210,17 +210,17 @@ async def resolve_document(  # noqa: PLR0913
     document = result.scalar_one_or_none()
 
     if not document:
-        msg = f"Document {document_id} not found"
+        msg = f"Документ {document_id} не найден"
         raise ValueError(msg)
 
     if document.status != DocumentStatus.IN_REVIEW:
         msg = (
-            f"Document {document_id} is not in review (status: {document.status.value})"
+            f"Документ {document_id} не находится в обработке (статус: {document.status.value})"
         )
         raise ValueError(msg)
 
     if document.assigned_reviewer_id != reviewer.id:
-        msg = f"Document {document_id} is not claimed by this reviewer"
+        msg = f"Документ {document_id} не закреплён за этим рецензентом"
         raise ValueError(msg)
 
     # Find the claim action to calculate duration
@@ -274,9 +274,9 @@ async def resolve_document(  # noqa: PLR0913
     await session.refresh(document)
 
     logger.info(
-        f"Document {document_id} resolved by reviewer {reviewer.id} "
+        f"Документ {document_id} обработан рецензентом {reviewer.id} "
         f"({reviewer.email}): {document.category_predicted} -> {final_category} "
-        f"in {duration_seconds}s"
+        f"за {duration_seconds}s"
     )
 
     return document

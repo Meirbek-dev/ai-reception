@@ -1,16 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import Login03 from "@/components/login-03";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -20,15 +11,15 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const { login, isAuthenticated } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
 
-  // Redirect if already authenticated
-  if (isAuthenticated) {
-    navigate({ to: "/" });
-    return null;
-  }
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      navigate({ to: "/review" });
+    }
+  }, [authLoading, isAuthenticated, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,63 +29,50 @@ function LoginPage() {
       return;
     }
 
-    setIsLoading(true);
+    setIsSubmitting(true);
     try {
       await login(email, password);
       toast.success("Успешный вход");
-      // Redirect to home page
-      navigate({ to: "/" });
+      navigate({ to: "/review" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Ошибка входа";
       toast.error(message);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/30">
+        <Login03
+          email={email}
+          password={password}
+          onEmailChange={(value) => setEmail(value)}
+          onPasswordChange={(value) => setPassword(value)}
+          onSubmit={(event) => event.preventDefault()}
+          isSubmitting
+          title="AI Reception"
+          subtitle="Проверяем сессию..."
+          ctaLabel="Войти"
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Вход в систему</CardTitle>
-          <CardDescription>
-            Введите email и пароль для доступа к системе рецензирования
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="admin@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={isLoading}
-                autoComplete="email"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Пароль</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={isLoading}
-                autoComplete="current-password"
-                required
-              />
-            </div>
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Вход..." : "Войти"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="bg-muted/30">
+      <Login03
+        email={email}
+        password={password}
+        onEmailChange={(value) => setEmail(value)}
+        onPasswordChange={(value) => setPassword(value)}
+        onSubmit={handleSubmit}
+        isSubmitting={isSubmitting}
+        title="AI Reception"
+        subtitle="Войдите, чтобы работать с очередью на проверку"
+        ctaLabel="Войти"
+      />
     </div>
   );
 }

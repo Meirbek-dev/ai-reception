@@ -55,7 +55,7 @@ class LoginResponse(BaseModel):
     """Login success response."""
 
     user: UserResponse
-    message: str = "Login successful"
+    message: str = "Успешный вход"
 
 
 class MessageResponse(BaseModel):
@@ -94,10 +94,14 @@ def set_session_cookie(response: Response, user_id: str) -> None:
         value=token,
         max_age=settings.session_max_age,
         httponly=True,
-        secure=False,  # Set to True in production with HTTPS
-        samesite="none"
-        if not settings.is_production
-        else "lax",  # "none" allows CORS in dev
+        # Use Secure cookies in production (HTTPS). During local development
+        # we must keep secure=False so the cookie can be set over HTTP.
+        secure=settings.is_production,
+        # Modern browsers require Secure for SameSite=None. Use SameSite=None
+        # only in production where Secure=True. Use Lax in development which
+        # works well for typical dev proxies (vite) and allows the cookie to
+        # be stored by the browser.
+        samesite="none" if settings.is_production else "lax",
     )
 
 
@@ -106,8 +110,8 @@ def clear_session_cookie(response: Response) -> None:
     response.delete_cookie(
         key=settings.session_cookie_name,
         httponly=True,
-        secure=False,
-        samesite="none" if not settings.is_production else "lax",
+        secure=settings.is_production,
+        samesite="none" if settings.is_production else "lax",
     )
 
 
@@ -130,7 +134,7 @@ async def get_current_user(
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail="Не выполнен вход",
         )
 
     # Verify token
@@ -138,7 +142,7 @@ async def get_current_user(
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session",
+            detail="Неверная или просроченная сессия",
         )
 
     # Load user from database
@@ -148,13 +152,13 @@ async def get_current_user(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail="Пользователь не найден",
         )
 
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is disabled",
+            detail="Учётная запись пользователя отключена",
         )
 
     return user
@@ -177,7 +181,10 @@ def require_role(
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires one of roles: {[r.value for r in allowed_roles]}",
+                detail=(
+                    "Требуется одна из ролей: "
+                    + ", ".join([r.value for r in allowed_roles])
+                ),
             )
         return current_user
 
@@ -237,21 +244,21 @@ async def login(
         # Don't reveal if user exists
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail="Неверный email или пароль",
         )
 
     # Verify password
     if not verify_password(request.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail="Неверный email или пароль",
         )
 
     # Check if account is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled",
+            detail="Учётная запись отключена",
         )
 
     # Update last login
@@ -261,7 +268,7 @@ async def login(
     # Set session cookie
     set_session_cookie(response, user.id)
 
-    logger.info("User logged in: %s (%s)", user.email, user.role.value)
+    logger.info("Пользователь вошёл: %s (%s)", user.email, user.role.value)
 
     return LoginResponse(
         user=UserResponse(
@@ -284,8 +291,8 @@ async def logout(
     Log out current user by clearing session cookie.
     """
     clear_session_cookie(response)
-    logger.info("User logged out: %s", current_user.email)
-    return MessageResponse(message="Logged out successfully")
+    logger.info("Пользователь вышел: %s", current_user.email)
+    return MessageResponse(message="Вы успешно вышли")
 
 
 @router.get("/me", response_model=UserResponse)

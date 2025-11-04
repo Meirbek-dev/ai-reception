@@ -39,7 +39,7 @@ export async function login(email: string, password: string): Promise<User> {
 
   if (!response.ok) {
     const error: ApiError = await response.json();
-    throw new Error(error.detail || "Login failed");
+    throw new Error(error.detail || "Ошибка входа");
   }
 
   const data: LoginResponse = await response.json();
@@ -58,7 +58,7 @@ export async function logout(): Promise<void> {
 
   if (!response.ok) {
     const error: ApiError = await response.json();
-    throw new Error(error.detail || "Logout failed");
+    throw new Error(error.detail || "Ошибка выхода");
   }
 }
 
@@ -80,13 +80,13 @@ export async function getMe(): Promise<User | null> {
 
     if (!response.ok) {
       const error: ApiError = await response.json();
-      throw new Error(error.detail || "Failed to get user");
+      throw new Error(error.detail || "Не удалось получить данные пользователя");
     }
 
     const data: { user: User } = await response.json();
     return data.user;
   } catch (error) {
-    console.error("Failed to get current user:", error);
+    console.error("Не удалось получить текущего пользователя:", error);
     return null;
   }
 }

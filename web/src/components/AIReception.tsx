@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import {
   ClipboardList,
   CloudUpload,
@@ -44,6 +45,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 // Types
 interface UploadedFile {
@@ -149,27 +151,41 @@ const normalizeCategoryKey = (raw?: string | null): string => {
 
 const THEME_KEY = "ai_reception_theme";
 
+const getInitials = (email?: string) => {
+  if (!email) return "?";
+  const [local] = email.split("@");
+  const parts = local.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const source = parts.length > 0 ? parts : [local];
+  const initials = source
+    .slice(0, 2)
+    .map((segment) => segment[0])
+    .join("");
+  return initials.toUpperCase().slice(0, 2) || "?";
+};
+
 // HeaderBar: depends only on isDark and toggle
 const HeaderBar = React.memo(function HeaderBar({
   isDark,
   toggleDark,
   user,
   onLogout,
+  isAuthLoading,
 }: {
   isDark: boolean;
   toggleDark: () => void;
   user: { email: string; role: string } | null;
   onLogout: () => void;
+  isAuthLoading: boolean;
 }) {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center">
-            <a href="#" aria-label="Home" className="block group">
+            <a href="#" aria-label="Главная" className="block group">
               <img
                 src={isDark ? "/logo_light.png" : "/logo_dark.png"}
-                alt="Logo"
+                alt="Логотип"
                 className="h-14 w-fit object-contain transition-transform duration-300 group-hover:scale-105"
               />
             </a>
@@ -186,15 +202,33 @@ const HeaderBar = React.memo(function HeaderBar({
           </div>
 
           <div className="flex items-center gap-2 justify-end">
-            {user && (
+            {isAuthLoading ? (
+              <span className="text-sm text-muted-foreground">Проверка...</span>
+            ) : user ? (
               <>
-                <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground mr-2">
-                  <User className="h-4 w-4" />
-                  <span className="font-medium">{user.email}</span>
-                  <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                    {user.role}
-                  </span>
+                <div className="hidden sm:flex items-center gap-3 text-sm text-muted-foreground mr-2">
+                  <Avatar className="size-9">
+                    <AvatarFallback className="text-xs font-semibold uppercase">
+                      {getInitials(user.email)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex flex-col">
+                    <span className="font-medium text-foreground">
+                      {user.email}
+                    </span>
+                    <span className="text-[11px] font-semibold uppercase text-muted-foreground">
+                      {user.role}
+                    </span>
+                  </div>
                 </div>
+                <Button
+                  asChild
+                  variant="secondary"
+                  size="sm"
+                  className="text-sm"
+                >
+                  <Link to="/review">Очередь</Link>
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -204,13 +238,17 @@ const HeaderBar = React.memo(function HeaderBar({
                   Выход
                 </Button>
               </>
+            ) : (
+              <Button asChild size="sm" className="text-sm">
+                <Link to="/login">Вход для рецензентов</Link>
+              </Button>
             )}
             <Button
               variant="ghost"
               size="icon"
               onClick={toggleDark}
               className="rounded-full h-12 w-12 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:scale-105 shadow-none"
-              aria-label="Toggle theme"
+              aria-label="Переключить тему"
             >
               {isDark ? (
                 <Sun className="h-5 w-5 text-amber-500" />
@@ -530,7 +568,7 @@ const FileGroup = React.memo(function FileGroup({
 });
 
 export default function AIReceptionApp() {
-  const { user, logout } = useAuth();
+  const { user, logout, isLoading: authLoading } = useAuth();
 
   const [isDark, setIsDark] = useState<boolean>(() => {
     try {
@@ -601,7 +639,7 @@ export default function AIReceptionApp() {
 
         if (!response.ok) {
           const text = await response.text().catch(() => "");
-          console.error("Upload failed, status:", response.status, text);
+          console.error("Ошибка загрузки, статус:", response.status, text);
           try {
             toast.error(strings.uploadFail);
           } catch {
@@ -648,7 +686,7 @@ export default function AIReceptionApp() {
           /* ignore if toast not available during SSR */
         }
       } catch (error) {
-        console.error("Upload failed:", error);
+        console.error("Ошибка загрузки:", error);
         try {
           toast.error(strings.uploadFail);
         } catch {
@@ -727,7 +765,7 @@ export default function AIReceptionApp() {
             return;
           }
           const text = await response.text().catch(() => "");
-          console.error("Delete failed, status:", response.status, text);
+          console.error("Ошибка удаления, статус:", response.status, text);
           return;
         }
 
@@ -737,7 +775,7 @@ export default function AIReceptionApp() {
         const filesResponse = await fetch(filesUrl);
         if (!filesResponse.ok) {
           console.error(
-            "Failed to fetch files list after delete",
+            "Не удалось получить список файлов после удаления",
             filesResponse.status
           );
           return;
@@ -746,7 +784,7 @@ export default function AIReceptionApp() {
         const filesData = await filesResponse.json();
         setFiles(filesData as UploadedFile[]);
       } catch (error) {
-        console.error("Delete failed:", error);
+        console.error("Ошибка удаления:", error);
       }
     },
     [name, lastName, queriedName, queriedLastName]
@@ -786,16 +824,11 @@ export default function AIReceptionApp() {
     a.href = url;
     a.target = "_blank";
     a.rel = "noreferrer";
-    a.download = "documents.zip";
+      a.download = "documents.zip";
     document.body.appendChild(a);
     a.click();
     a.remove();
-  }, [
-	name,
-	lastName,
-	queriedName,
-	queriedLastName
-]);
+  }, [name, lastName, queriedName, queriedLastName]);
 
   const toggleSelection = useCallback((uid: string) => {
     setSelected((prev) => {
@@ -856,9 +889,56 @@ export default function AIReceptionApp() {
 
   return (
     <div className="min-h-screen bg-background dark:bg-background transition-colors">
-      <HeaderBar isDark={isDark} toggleDark={toggleDark} user={user} onLogout={handleLogout} />
+      <HeaderBar
+        isDark={isDark}
+        toggleDark={toggleDark}
+        user={user}
+        onLogout={handleLogout}
+        isAuthLoading={authLoading}
+      />
 
       <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        {!authLoading && !user && (
+          <Card className="border-dashed">
+            <CardContent className="py-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold">
+                    Команда приёмной комиссии
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Войдите, чтобы перейти в очередь ручной проверки документов.
+                  </p>
+                </div>
+                <Button asChild>
+                  <Link to="/login">Перейти к входу</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {!authLoading && user && (
+          <Card className="border-dashed">
+            <CardContent className="py-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold">
+                    Очередь на проверку
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Перейдите к панели рецензента, чтобы обработать новые
+                    документы.
+                  </p>
+                </div>
+                <Button asChild variant="secondary">
+                  <Link to="/review">Открыть очередь</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <FormCard
           name={name}
           lastName={lastName}

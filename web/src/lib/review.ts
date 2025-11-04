@@ -61,9 +61,8 @@ export async function getReviewQueue(params?: {
   if (params?.limit) searchParams.set("limit", params.limit.toString());
   if (params?.offset) searchParams.set("offset", params.offset.toString());
 
-  const url = `${getBackendOrigin()}/admin/review-queue${
-    searchParams.toString() ? `?${searchParams.toString()}` : ""
-  }`;
+  const url = `${getBackendOrigin()}/admin/review-queue${searchParams.toString() ? `?${searchParams.toString()}` : ""
+    }`;
 
   const response = await fetch(url, {
     method: "GET",
@@ -72,7 +71,7 @@ export async function getReviewQueue(params?: {
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || "Failed to get review queue");
+    throw new Error(error.detail || "Не удалось получить очередь на проверку");
   }
 
   return response.json();
@@ -92,7 +91,7 @@ export async function claimDocument(documentId: number): Promise<Document> {
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || "Failed to claim document");
+    throw new Error(error.detail || "Не удалось принять документ");
   }
 
   return response.json();
@@ -112,7 +111,7 @@ export async function releaseDocument(documentId: number): Promise<Document> {
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || "Failed to release document");
+    throw new Error(error.detail || "Не удалось вернуть документ в очередь");
   }
 
   return response.json();
@@ -139,7 +138,7 @@ export async function resolveDocument(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || "Failed to resolve document");
+    throw new Error(error.detail || "Не удалось завершить проверку документа");
   }
 
   return response.json();
@@ -159,7 +158,7 @@ export async function getDocument(documentId: number): Promise<Document> {
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || "Failed to get document");
+    throw new Error(error.detail || "Не удалось получить документ");
   }
 
   return response.json();
@@ -181,7 +180,7 @@ export async function getDocumentPreview(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || "Failed to get preview");
+    throw new Error(error.detail || "Не удалось получить предпросмотр");
   }
 
   return response.json();
@@ -203,7 +202,7 @@ export async function getDocumentAudit(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || "Failed to get audit trail");
+    throw new Error(error.detail || "Не удалось получить журнал действий");
   }
 
   return response.json();

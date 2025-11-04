@@ -128,9 +128,7 @@ AuditLog (optional initial merge with ReviewAction to simplify)
 2. **Upload persistence** ✅ **COMPLETE**: modify `/upload` to write `Document` rows, compute confidence, queue logic.
 3. **Auth** ✅ **COMPLETE**: session middleware, login/logout endpoints, role guards, frontend auth state.
 4. **Review API** ✅ **COMPLETE**: queue list/claim/release/resolve endpoints, preview handler, audit logging.
-5. **Frontend UI**: new routes, layout, state management, keyboard shortcuts, assignment workflow.
-6. **Metrics**: scoreboard endpoint and dashboard widgets.
-7. **QA**: end-to-end manual test plan + automated FastAPI + frontend tests.
+5. **Frontend UI**: new routes, layout, state management, assignment workflow.
 
 ## Config & Deployment Notes
 

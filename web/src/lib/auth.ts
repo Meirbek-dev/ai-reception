@@ -41,7 +41,7 @@ export interface RefreshResponse extends AuthSession {
 interface ApiErrorResponse {
   detail?: string;
   message?: string;
-  errors?: Array<{ message?: string }>;
+  errors?: { message?: string }[];
 }
 
 function extractErrorMessage(payload: ApiErrorResponse | null | undefined) {
@@ -117,7 +117,7 @@ export async function login(
     return pickAuthSession(data);
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(NETWORK_ERROR_MESSAGE);
+      throw new Error(NETWORK_ERROR_MESSAGE, { cause: error });
     }
     throw normalizeUnknownError(error, "Ошибка входа");
   }
@@ -139,7 +139,7 @@ export async function logout(): Promise<void> {
     }
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(NETWORK_ERROR_MESSAGE);
+      throw new Error(NETWORK_ERROR_MESSAGE, { cause: error });
     }
     throw normalizeUnknownError(error, "Ошибка выхода");
   }
@@ -201,7 +201,7 @@ export async function refreshSession(): Promise<AuthSession> {
     return pickAuthSession(data);
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(NETWORK_ERROR_MESSAGE);
+      throw new Error(NETWORK_ERROR_MESSAGE, { cause: error });
     }
     throw normalizeUnknownError(error, "Не удалось обновить сессию");
   }

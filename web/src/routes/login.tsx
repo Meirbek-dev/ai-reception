@@ -67,26 +67,6 @@ function LoginPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/30">
-        <Login03
-          email={email}
-          password={password}
-          rememberMe={rememberMe}
-          onEmailChange={(value) => setEmail(value)}
-          onPasswordChange={(value) => setPassword(value)}
-          onRememberChange={handleRememberChange}
-          onSubmit={(event) => event.preventDefault()}
-          isSubmitting
-          title="AI Reception"
-          subtitle="Проверяем сессию..."
-          ctaLabel="Войти"
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-muted/30">
       <Login03
         email={email}
         password={password}
@@ -94,12 +74,28 @@ function LoginPage() {
         onEmailChange={(value) => setEmail(value)}
         onPasswordChange={(value) => setPassword(value)}
         onRememberChange={handleRememberChange}
-        onSubmit={handleSubmit}
-        isSubmitting={isSubmitting}
+        onSubmit={(event) => event.preventDefault()}
+        isSubmitting
         title="AI Reception"
-        subtitle="Войдите, чтобы работать с очередью на проверку"
+        subtitle="Проверяем сессию..."
         ctaLabel="Войти"
       />
-    </div>
+    );
+  }
+
+  return (
+    <Login03
+      email={email}
+      password={password}
+      rememberMe={rememberMe}
+      onEmailChange={(value) => setEmail(value)}
+      onPasswordChange={(value) => setPassword(value)}
+      onRememberChange={handleRememberChange}
+      onSubmit={handleSubmit}
+      isSubmitting={isSubmitting}
+      title="AI Reception"
+      subtitle="Войдите, чтобы работать с очередью на проверку"
+      ctaLabel="Войти"
+    />
   );
 }

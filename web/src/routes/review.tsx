@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { Navbar } from "@/components/Navbar";
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import * as reviewApi from "@/lib/review";
 import type { Document } from "@/lib/review";
 
@@ -33,26 +33,16 @@ const categoryNames: Record<string, string> = {
   MedSpravka: "Медицинская справка",
 };
 
-const getInitials = (email?: string) => {
-  if (!email) return "?";
-  const [local] = email.split("@");
-  const parts = local.split(/[^a-zA-Z0-9]+/).filter(Boolean);
-  const source = parts.length ? parts : [local];
-  const initials = source
-    .slice(0, 2)
-    .map((segment) => segment[0])
-    .join("");
-  return initials.toUpperCase().slice(0, 2) || "?";
-};
+const THEME_KEY = "ai_reception_theme";
 
 function ReviewQueuePage() {
   const {
     user,
-    session,
     isAuthenticated,
     isLoading: authLoading,
     isRefreshing,
     refresh,
+    logout,
   } = useAuth();
   const navigate = useNavigate();
 
@@ -63,6 +53,21 @@ function ReviewQueuePage() {
     "queued"
   );
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Theme state
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === "dark") return true;
+      if (saved === "light") return false;
+      if (typeof window !== "undefined" && window.matchMedia) {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  });
 
   // Preview state
   const [preview, setPreview] = useState<reviewApi.DocumentPreview | null>(
@@ -76,19 +81,15 @@ function ReviewQueuePage() {
   const [applicantLastname, setApplicantLastname] = useState("");
   const [comment, setComment] = useState("");
 
-  const sessionExpiryLabel = useMemo(() => {
-    if (!session) return "";
-    const expiresAtDate = new Date(session.expires_at);
-    if (Number.isNaN(expiresAtDate.getTime())) {
-      return "";
+  // Apply theme
+  useEffect(() => {
+    try {
+      document.documentElement.classList.toggle("dark", isDark);
+      localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
+    } catch {
+      // ignore
     }
-    return new Intl.DateTimeFormat("ru-RU", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(expiresAtDate);
-  }, [session]);
+  }, [isDark]);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -169,7 +170,9 @@ function ReviewQueuePage() {
         toast.success("Документ возвращён в очередь");
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Не удалось вернуть документ в очередь";
+          error instanceof Error
+            ? error.message
+            : "Не удалось вернуть документ в очередь";
         toast.error(message);
       }
     },
@@ -201,7 +204,9 @@ function ReviewQueuePage() {
       await loadDocuments(); // Refresh queue
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Не удалось завершить проверку документа";
+        error instanceof Error
+          ? error.message
+          : "Не удалось завершить проверку документа";
       toast.error(message);
     }
   }, [
@@ -221,6 +226,18 @@ function ReviewQueuePage() {
       toast.error("Сессия истекла, пожалуйста войдите снова");
     }
   }, [refresh]);
+
+  const toggleDark = useCallback(() => setIsDark((v) => !v), []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await logout();
+      toast.success("Вы вышли из системы");
+      navigate({ to: "/login" });
+    } catch {
+      toast.error("Ошибка при выходе");
+    }
+  }, [logout, navigate]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -292,8 +309,7 @@ function ReviewQueuePage() {
       case "queued": {
         return (
           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
-            <Clock className="h-3 w-3" />
-            В очереди
+            <Clock className="h-3 w-3" />В очереди
           </span>
         );
       }
@@ -401,63 +417,15 @@ function ReviewQueuePage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-card shadow-sm sticky top-0 z-10">
-        <div className="mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between">
-            <h1 className="text-xl font-semibold">Очередь на проверку</h1>
-            <div className="flex items-center gap-4">
-              <div className="hidden sm:flex items-center gap-3">
-                <Avatar className="size-9">
-                  <AvatarFallback className="text-xs font-semibold uppercase">
-                    {getInitials(user.email)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="leading-tight">
-                  <div className="text-sm font-medium text-foreground">
-                    {user.email}
-                  </div>
-                  <div className="text-xs uppercase text-muted-foreground">
-                    {user.role}
-                  </div>
-                  {sessionExpiryLabel && (
-                    <div className="text-[11px] text-muted-foreground">
-                      Сессия до {sessionExpiryLabel}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleRefreshSession}
-                disabled={isRefreshing}
-                title="Обновить сессию"
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
-                />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate({ to: "/" })}
-              >
-                Назад к загрузке
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {isRefreshing && (
-        <div className="bg-muted/70 border-b border-border">
-          <div className="mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 text-sm text-muted-foreground">
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            <span>Продлеваем вашу сессию...</span>
-          </div>
-        </div>
-      )}
+      <Navbar
+        isDark={isDark}
+        toggleDark={toggleDark}
+        user={user}
+        onLogout={handleLogout}
+        isRefreshing={isRefreshing}
+        onRefreshSession={handleRefreshSession}
+        currentPage="review"
+      />
 
       <div className="mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -633,7 +601,8 @@ function ReviewQueuePage() {
 
                   {/* Review form - only for in_review docs assigned to current user */}
                   {selectedDoc.status === "in_review" &&
-                    selectedDoc.assigned_reviewer_id?.toString() === user.id && (
+                    selectedDoc.assigned_reviewer_id?.toString() ===
+                      user.id && (
                       <div className="space-y-4 p-4 border rounded-lg">
                         <h3 className="font-medium">Проверить документ</h3>
 
@@ -746,7 +715,7 @@ function ReviewQueuePage() {
                 </CardContent>
               </Card>
             ) : (
-              <Card>
+              <Card className="h-full">
                 <CardContent className="flex items-center justify-center h-96">
                   <div className="text-center text-muted-foreground">
                     <FileText className="h-16 w-16 mx-auto mb-4 opacity-50" />

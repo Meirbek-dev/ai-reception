@@ -12,9 +12,7 @@ import {
   Heart,
   HelpCircle,
   ImageIcon,
-  Moon,
   RefreshCw,
-  Sun,
   Syringe,
   Tag,
   Trash2,
@@ -23,6 +21,7 @@ import {
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { Navbar } from "@/components/Navbar";
 import type { DropzoneHandle } from "@/components/kibo-ui/dropzone";
 import {
   Dropzone,
@@ -45,7 +44,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 // Types
 interface UploadedFile {
@@ -150,118 +148,6 @@ const normalizeCategoryKey = (raw?: string | null): string => {
 // and memoize where appropriate.
 
 const THEME_KEY = "ai_reception_theme";
-
-const getInitials = (email?: string) => {
-  if (!email) return "?";
-  const [local] = email.split("@");
-  const parts = local.split(/[^a-zA-Z0-9]+/).filter(Boolean);
-  const source = parts.length > 0 ? parts : [local];
-  const initials = source
-    .slice(0, 2)
-    .map((segment) => segment[0])
-    .join("");
-  return initials.toUpperCase().slice(0, 2) || "?";
-};
-
-// HeaderBar: depends only on isDark and toggle
-const HeaderBar = React.memo(function HeaderBar({
-  isDark,
-  toggleDark,
-  user,
-  onLogout,
-  isAuthLoading,
-}: {
-  isDark: boolean;
-  toggleDark: () => void;
-  user: { email: string; role: string } | null;
-  onLogout: () => void;
-  isAuthLoading: boolean;
-}) {
-  return (
-    <header className="sticky top-0 z-50 border-b border-border bg-card shadow-sm">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center">
-            <a href="#" aria-label="Главная" className="block group">
-              <img
-                src={isDark ? "/logo_light.png" : "/logo_dark.png"}
-                alt="Логотип"
-                className="h-14 w-fit object-contain transition-transform duration-300 group-hover:scale-105"
-              />
-            </a>
-          </div>
-
-          <div className="flex-1 flex items-center justify-center">
-            <h1
-              className={`text-xl sm:text-2xl font-semibold tracking-tight ${
-                isDark ? "text-foreground" : "text-tou"
-              }`}
-            >
-              {strings.appTitle}
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-2 justify-end">
-            {isAuthLoading ? (
-              <span className="text-sm text-muted-foreground">Проверка...</span>
-            ) : user ? (
-              <>
-                <div className="hidden sm:flex items-center gap-3 text-sm text-muted-foreground mr-2">
-                  <Avatar className="size-9">
-                    <AvatarFallback className="text-xs font-semibold uppercase">
-                      {getInitials(user.email)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex flex-col">
-                    <span className="font-medium text-foreground">
-                      {user.email}
-                    </span>
-                    <span className="text-[11px] font-semibold uppercase text-muted-foreground">
-                      {user.role}
-                    </span>
-                  </div>
-                </div>
-                <Button
-                  asChild
-                  variant="secondary"
-                  size="sm"
-                  className="text-sm"
-                >
-                  <Link to="/review">Очередь</Link>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onLogout}
-                  className="text-sm"
-                >
-                  Выход
-                </Button>
-              </>
-            ) : (
-              <Button asChild size="sm" className="text-sm">
-                <Link to="/login">Вход для рецензентов</Link>
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleDark}
-              className="rounded-full h-12 w-12 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:scale-105 shadow-none"
-              aria-label="Переключить тему"
-            >
-              {isDark ? (
-                <Sun className="h-5 w-5 text-amber-500" />
-              ) : (
-                <Moon className="h-5 w-5 text-tou" />
-              )}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-});
 
 const FormCard = React.memo(function FormCard({
   name,
@@ -824,7 +710,7 @@ export default function AIReceptionApp() {
     a.href = url;
     a.target = "_blank";
     a.rel = "noreferrer";
-      a.download = "documents.zip";
+    a.download = "documents.zip";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -889,12 +775,13 @@ export default function AIReceptionApp() {
 
   return (
     <div className="min-h-screen bg-background dark:bg-background transition-colors">
-      <HeaderBar
+      <Navbar
         isDark={isDark}
         toggleDark={toggleDark}
         user={user}
         onLogout={handleLogout}
         isAuthLoading={authLoading}
+        currentPage="home"
       />
 
       <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 space-y-6">

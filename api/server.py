@@ -1495,5 +1495,5 @@ if __name__ == "__main__":
         host=host,
         port=port,
         reload=reload_enabled,
-        # log_level=settings.log_level.lower(),
+        log_level=settings.log_level.lower(),
     )

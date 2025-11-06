@@ -94,7 +94,7 @@ function LoginPage() {
       onSubmit={handleSubmit}
       isSubmitting={isSubmitting}
       title="AI Reception"
-      subtitle="Войдите, чтобы работать с очередью на проверку"
+      subtitle="Войдите, чтобы проводить рецензию документов"
       ctaLabel="Войти"
     />
   );

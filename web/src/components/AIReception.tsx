@@ -798,7 +798,7 @@ export default function AIReceptionApp() {
                   </p>
                 </div>
                 <Button asChild>
-                  <Link to="/login">Перейти к входу</Link>
+                  <Link to="/login">Войти</Link>
                 </Button>
               </div>
             </CardContent>

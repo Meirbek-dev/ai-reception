@@ -371,7 +371,7 @@ export const Navbar = React.memo(function Navbar({
               ) : (
                 <>
                   <Button asChild size="sm" className="text-sm shrink-0">
-                    <Link to="/login">Вход для рецензентов</Link>
+                    <Link to="/login">Войти как рецензент</Link>
                   </Button>
 
                   {/* Theme Toggle for non-authenticated users */}

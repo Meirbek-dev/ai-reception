@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.security import HTTPBearer
-from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
+from itsdangerous import BadSignature, URLSafeSerializer
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -24,8 +25,8 @@ logger = logging.getLogger(__name__)
 # Create router for auth endpoints
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Session signer for secure cookies
-_signer = TimestampSigner(settings.session_secret_key)
+# Session serializer for signed cookies
+_serializer = URLSafeSerializer(settings.session_secret_key, salt="session")
 
 
 # ============================================================================
@@ -38,6 +39,7 @@ class LoginRequest(BaseModel):
 
     email: EmailStr
     password: str
+    remember_me: bool = False
 
 
 class UserResponse(BaseModel):
@@ -51,11 +53,30 @@ class UserResponse(BaseModel):
     last_login_at: datetime | None
 
 
-class LoginResponse(BaseModel):
-    """Login success response."""
+class SessionInfo(BaseModel):
+    """Session metadata returned to the client."""
+
+    expires_at: datetime
+    remember_me: bool
+
+
+class AuthSessionResponse(BaseModel):
+    """Current authenticated user alongside active session."""
 
     user: UserResponse
+    session: SessionInfo
+
+
+class LoginResponse(AuthSessionResponse):
+    """Login success response."""
+
     message: str = "Успешный вход"
+
+
+class RefreshResponse(AuthSessionResponse):
+    """Session refresh response."""
+
+    message: str = "Сессия обновлена"
 
 
 class MessageResponse(BaseModel):
@@ -69,40 +90,95 @@ class MessageResponse(BaseModel):
 # ============================================================================
 
 
-def create_session_token(user_id: str) -> str:
+@dataclass(slots=True)
+class SessionData:
+    """Decoded session payload."""
+
+    user_id: str
+    remember_me: bool
+    expires_at: datetime
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _session_duration_seconds(*, remember: bool) -> int:
+    return settings.session_remember_max_age if remember else settings.session_max_age
+
+
+def create_session_token(user_id: str, *, remember: bool) -> tuple[str, SessionData]:
     """Create a signed session token for the user."""
-    return _signer.sign(user_id).decode("utf-8")
+    issued_at = _now()
+    expires_at = issued_at + timedelta(
+        seconds=_session_duration_seconds(remember=remember)
+    )
+    payload = {
+        "uid": user_id,
+        "remember": remember,
+        "iat": int(issued_at.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    token = _serializer.dumps(payload)
+    return token, SessionData(user_id=user_id, remember_me=remember, expires_at=expires_at)
 
 
-def verify_session_token(token: str) -> str | None:
-    """
-    Verify and decode a session token.
-
-    Returns user_id if valid, None if invalid/expired.
-    """
+def verify_session_token(token: str) -> SessionData | None:
+    """Verify and decode a session token."""
     try:
-        return _signer.unsign(token, max_age=settings.session_max_age).decode("utf-8")
-    except (BadSignature, SignatureExpired):
+        payload = _serializer.loads(token)
+    except BadSignature:
+        logger.debug("Invalid session signature received")
         return None
 
+    if not isinstance(payload, dict):
+        logger.debug("Session payload is not a mapping")
+        return None
 
-def set_session_cookie(response: Response, user_id: str) -> None:
+    try:
+        user_id = str(payload["uid"])
+        remember = bool(payload.get("remember", False))
+        expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning("Malformed session payload", exc_info=exc)
+        return None
+
+    if expires_at <= _now():
+        logger.info("Session expired for user_id=%s", user_id)
+        return None
+
+    return SessionData(user_id=user_id, remember_me=remember, expires_at=expires_at)
+
+
+def set_session_cookie(
+    response: Response,
+    token: str,
+    *,
+    remember: bool,
+    expires_at: datetime,
+) -> None:
     """Set session cookie on response."""
-    token = create_session_token(user_id)
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
-        max_age=settings.session_max_age,
+        max_age=_session_duration_seconds(remember=remember),
+        expires=expires_at,
         httponly=True,
-        # Use Secure cookies in production (HTTPS). During local development
-        # we must keep secure=False so the cookie can be set over HTTP.
         secure=settings.is_production,
-        # Modern browsers require Secure for SameSite=None. Use SameSite=None
-        # only in production where Secure=True. Use Lax in development which
-        # works well for typical dev proxies (vite) and allows the cookie to
-        # be stored by the browser.
         samesite="none" if settings.is_production else "lax",
     )
+
+
+def issue_session(response: Response, user_id: str, *, remember: bool) -> SessionData:
+    """Create a new session token and attach it to the response."""
+    token, session_data = create_session_token(user_id, remember=remember)
+    set_session_cookie(
+        response,
+        token,
+        remember=session_data.remember_me,
+        expires_at=session_data.expires_at,
+    )
+    return session_data
 
 
 def clear_session_cookie(response: Response) -> None:
@@ -113,6 +189,25 @@ def clear_session_cookie(response: Response) -> None:
         secure=settings.is_production,
         samesite="none" if settings.is_production else "lax",
     )
+
+
+def _require_session_data(request: Request) -> SessionData:
+    token = request.cookies.get(settings.session_cookie_name)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Не выполнен вход",
+        )
+
+    session_data = verify_session_token(token)
+    if not session_data:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Сессия недействительна или истекла",
+        )
+
+    request.state.session_data = session_data
+    return session_data
 
 
 # ============================================================================
@@ -129,24 +224,19 @@ async def get_current_user(
 
     Raises 401 if not authenticated or user not found.
     """
-    # Get session cookie
-    token = request.cookies.get(settings.session_cookie_name)
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Не выполнен вход",
-        )
-
-    # Verify token
-    user_id = verify_session_token(token)
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверная или просроченная сессия",
-        )
+    session_data = _require_session_data(request)
 
     # Load user from database
-    result = await session.execute(sa.select(User).where(User.id == user_id))
+    try:
+        result = await session.execute(
+            sa.select(User).where(User.id == session_data.user_id)
+        )
+    except SQLAlchemyError as exc:
+        logger.exception("Database error while loading current user", exc_info=exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось загрузить пользователя. Попробуйте позже.",
+        ) from exc
     user = result.scalar_one_or_none()
 
     if not user:
@@ -205,11 +295,19 @@ async def get_current_user_optional(
     if not token:
         return None
 
-    user_id = verify_session_token(token)
-    if not user_id:
+    session_data = verify_session_token(token)
+    if not session_data:
         return None
 
-    result = await session.execute(sa.select(User).where(User.id == user_id))
+    request.state.session_data = session_data
+
+    try:
+        result = await session.execute(
+            sa.select(User).where(User.id == session_data.user_id)
+        )
+    except SQLAlchemyError as exc:
+        logger.exception("Database error while loading optional user", exc_info=exc)
+        return None
     user = result.scalar_one_or_none()
 
     if not user or not user.is_active:
@@ -223,6 +321,24 @@ async def get_current_user_optional(
 # ============================================================================
 
 
+def _build_user_response(user: User) -> UserResponse:
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        role=user.role.value,
+        is_active=user.is_active,
+        last_login_at=user.last_login_at,
+    )
+
+
+def _build_session_info(session_data: SessionData) -> SessionInfo:
+    return SessionInfo(
+        expires_at=session_data.expires_at,
+        remember_me=session_data.remember_me,
+    )
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(
     request: LoginRequest,
@@ -234,10 +350,18 @@ async def login(
 
     Returns user info and sets session cookie.
     """
-    # Find user by email
-    result = await session.execute(
-        sa.select(User).where(User.email == request.email.lower())
-    )
+    email = request.email.lower().strip()
+    remember = bool(request.remember_me)
+
+    try:
+        result = await session.execute(sa.select(User).where(User.email == email))
+    except SQLAlchemyError as exc:
+        logger.exception("Database error while looking up user", exc_info=exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось обработать запрос. Попробуйте позже.",
+        ) from exc
+
     user = result.scalar_one_or_none()
 
     if not user:
@@ -262,23 +386,25 @@ async def login(
         )
 
     # Update last login
-    user.last_login_at = datetime.now(UTC)
-    await session.commit()
+    user.last_login_at = _now()
 
-    # Set session cookie
-    set_session_cookie(response, user.id)
+    try:
+        await session.commit()
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        logger.exception("Failed to update last_login_at", exc_info=exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось завершить вход. Попробуйте снова немного позже.",
+        ) from exc
+
+    session_data = issue_session(response, user.id, remember=remember)
 
     logger.info("Пользователь вошёл: %s (%s)", user.email, user.role.value)
 
     return LoginResponse(
-        user=UserResponse(
-            id=user.id,
-            email=user.email,
-            display_name=user.display_name,
-            role=user.role.value,
-            is_active=user.is_active,
-            last_login_at=user.last_login_at,
-        )
+        user=_build_user_response(user),
+        session=_build_session_info(session_data),
     )
 
 
@@ -295,27 +421,63 @@ async def logout(
     return MessageResponse(message="Вы успешно вышли")
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_me(
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh_session(
+    request: Request,
+    response: Response,
     current_user: Annotated[User, Depends(get_current_user)],
-) -> UserResponse:
-    """
-    Get current authenticated user information.
-    """
-    return UserResponse(
-        id=current_user.id,
-        email=current_user.email,
-        display_name=current_user.display_name,
-        role=current_user.role.value,
-        is_active=current_user.is_active,
-        last_login_at=current_user.last_login_at,
+) -> RefreshResponse:
+    """Refresh the current session cookie."""
+    session_data = getattr(request.state, "session_data", None)
+    if session_data is None:
+        session_data = _require_session_data(request)
+
+    remaining = session_data.expires_at - _now()
+    if remaining <= timedelta(seconds=settings.session_refresh_lead_time):
+        session_data = issue_session(
+            response,
+            current_user.id,
+            remember=session_data.remember_me,
+        )
+        logger.debug(
+            "Session refreshed for user_id=%s remember=%s",
+            current_user.id,
+            session_data.remember_me,
+        )
+    else:
+        logger.debug(
+            "Session refresh skipped (too early) for user_id=%s",
+            current_user.id,
+        )
+    return RefreshResponse(
+        user=_build_user_response(current_user),
+        session=_build_session_info(session_data),
+    )
+
+
+@router.get("/me", response_model=AuthSessionResponse)
+async def get_me(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> AuthSessionResponse:
+    """Get current authenticated user information."""
+    session_data = getattr(request.state, "session_data", None)
+    if session_data is None:
+        session_data = _require_session_data(request)
+
+    return AuthSessionResponse(
+        user=_build_user_response(current_user),
+        session=_build_session_info(session_data),
     )
 
 
 __all__ = [
+    "AuthSessionResponse",
     "LoginRequest",
     "LoginResponse",
     "MessageResponse",
+    "RefreshResponse",
+    "SessionInfo",
     "UserResponse",
     "get_current_user",
     "get_current_user_optional",

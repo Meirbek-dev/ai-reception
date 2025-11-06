@@ -4,12 +4,15 @@ import type { FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export interface Login03Props {
   email: string;
   password: string;
+  rememberMe?: boolean;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
+  onRememberChange?: (value: boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   isSubmitting?: boolean;
   title?: string;
@@ -20,8 +23,10 @@ export interface Login03Props {
 export default function Login03({
   email,
   password,
+  rememberMe = false,
   onEmailChange,
   onPasswordChange,
+  onRememberChange,
   onSubmit,
   isSubmitting = false,
   title = "Добро пожаловать",
@@ -66,6 +71,23 @@ export default function Login03({
                 disabled={isSubmitting}
                 required
               />
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <label className="flex items-center gap-2">
+                <Checkbox
+                  id="remember-login-03"
+                  checked={rememberMe}
+                  onCheckedChange={(checked) =>
+                    onRememberChange?.(checked === true)
+                  }
+                  disabled={isSubmitting}
+                  aria-label="Запомнить меня"
+                />
+                <span className="text-muted-foreground">Запомнить меня</span>
+              </label>
+              <span className="text-muted-foreground text-xs">
+                Сессия обновляется автоматически
+              </span>
             </div>
             <Button type="submit" className="mt-4 w-full py-2 font-medium" disabled={isSubmitting}>
               {isSubmitting ? "Вход..." : ctaLabel}

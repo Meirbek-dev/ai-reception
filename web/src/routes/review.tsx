@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   AlertCircle,
@@ -46,7 +46,14 @@ const getInitials = (email?: string) => {
 };
 
 function ReviewQueuePage() {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const {
+    user,
+    session,
+    isAuthenticated,
+    isLoading: authLoading,
+    isRefreshing,
+    refresh,
+  } = useAuth();
   const navigate = useNavigate();
 
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -69,12 +76,26 @@ function ReviewQueuePage() {
   const [applicantLastname, setApplicantLastname] = useState("");
   const [comment, setComment] = useState("");
 
+  const sessionExpiryLabel = useMemo(() => {
+    if (!session) return "";
+    const expiresAtDate = new Date(session.expires_at);
+    if (Number.isNaN(expiresAtDate.getTime())) {
+      return "";
+    }
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(expiresAtDate);
+  }, [session]);
+
   // Redirect if not authenticated
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
+    if (!authLoading && !isRefreshing && !isAuthenticated) {
       navigate({ to: "/login" });
     }
-  }, [authLoading, isAuthenticated, navigate]);
+  }, [authLoading, isAuthenticated, isRefreshing, navigate]);
 
   // Load documents
   const loadDocuments = useCallback(async () => {
@@ -94,10 +115,10 @@ function ReviewQueuePage() {
   }, [filter]);
 
   useEffect(() => {
-    if (!authLoading && isAuthenticated) {
+    if (!authLoading && !isRefreshing && isAuthenticated) {
       loadDocuments();
     }
-  }, [authLoading, isAuthenticated, loadDocuments]);
+  }, [authLoading, isAuthenticated, isRefreshing, loadDocuments]);
 
   // Load preview when document selected
   useEffect(() => {
@@ -192,6 +213,15 @@ function ReviewQueuePage() {
     loadDocuments,
   ]);
 
+  const handleRefreshSession = useCallback(async () => {
+    const success = await refresh();
+    if (success) {
+      toast.success("Сессия обновлена");
+    } else {
+      toast.error("Сессия истекла, пожалуйста войдите снова");
+    }
+  }, [refresh]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
@@ -217,7 +247,7 @@ function ReviewQueuePage() {
           // Release
           if (
             selectedDoc.status === "in_review" &&
-            selectedDoc.assigned_reviewer_id === user?.id
+            selectedDoc.assigned_reviewer_id?.toString() === user?.id
           ) {
             handleRelease(selectedDoc);
           }
@@ -227,7 +257,7 @@ function ReviewQueuePage() {
           // Accept (same category)
           if (
             selectedDoc.status === "in_review" &&
-            selectedDoc.assigned_reviewer_id === user?.id
+            selectedDoc.assigned_reviewer_id?.toString() === user?.id
           ) {
             setFinalCategory(selectedDoc.category_predicted);
             setTimeout(() => handleResolve(), 100);
@@ -318,7 +348,10 @@ function ReviewQueuePage() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <RefreshCw className="h-8 w-8 animate-spin" />
+          <p className="text-sm">Проверяем сессию...</p>
+        </div>
       </div>
     );
   }
@@ -387,8 +420,24 @@ function ReviewQueuePage() {
                   <div className="text-xs uppercase text-muted-foreground">
                     {user.role}
                   </div>
+                  {sessionExpiryLabel && (
+                    <div className="text-[11px] text-muted-foreground">
+                      Сессия до {sessionExpiryLabel}
+                    </div>
+                  )}
                 </div>
               </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleRefreshSession}
+                disabled={isRefreshing}
+                title="Обновить сессию"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                />
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -400,6 +449,15 @@ function ReviewQueuePage() {
           </div>
         </div>
       </header>
+
+      {isRefreshing && (
+        <div className="bg-muted/70 border-b border-border">
+          <div className="mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 text-sm text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            <span>Продлеваем вашу сессию...</span>
+          </div>
+        </div>
+      )}
 
       <div className="mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -575,7 +633,7 @@ function ReviewQueuePage() {
 
                   {/* Review form - only for in_review docs assigned to current user */}
                   {selectedDoc.status === "in_review" &&
-                    selectedDoc.assigned_reviewer_id === user.id && (
+                    selectedDoc.assigned_reviewer_id?.toString() === user.id && (
                       <div className="space-y-4 p-4 border rounded-lg">
                         <h3 className="font-medium">Проверить документ</h3>
 

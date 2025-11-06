@@ -37,7 +37,9 @@ class Settings(BaseSettings):
         default="CHANGE_ME_IN_PRODUCTION_USE_LONG_RANDOM_STRING"
     )
     session_cookie_name: str = Field(default="ai_reception_session")
-    session_max_age: int = Field(default=86400 * 7, gt=0)  # 7 days in seconds
+    session_max_age: int = Field(default=86400, gt=0)  # 24 hours in seconds
+    session_remember_max_age: int = Field(default=86400 * 30, gt=0)
+    session_refresh_lead_time: int = Field(default=300, ge=60)
 
     model_config = ConfigDict(env_prefix="APP_", case_sensitive=False)
 
@@ -61,6 +63,9 @@ class Settings(BaseSettings):
         env_url = os.getenv("DATABASE_URL")
         if env_url:
             object.__setattr__(self, "database_url", env_url)
+        if self.session_remember_max_age < self.session_max_age:
+            msg = "session_remember_max_age must be greater than or equal to session_max_age"
+            raise ValueError(msg)
         return self
 
 

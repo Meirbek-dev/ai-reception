@@ -54,7 +54,7 @@ async def get_review_queue(
 
 async def claim_document(
     session: AsyncSession,
-    document_id: int,
+    document_id: str,
     reviewer: User,
 ) -> Document:
     """
@@ -72,6 +72,7 @@ async def claim_document(
         ValueError: If document not found, already claimed, or not in queued status
     """
     # Load document
+
     result = await session.execute(select(Document).where(Document.id == document_id))
     document = result.scalar_one_or_none()
 
@@ -116,7 +117,7 @@ async def claim_document(
 
 async def release_document(
     session: AsyncSession,
-    document_id: int,
+    document_id: str,
     reviewer: User,
 ) -> Document:
     """
@@ -134,6 +135,7 @@ async def release_document(
         ValueError: If document not found, not claimed by this reviewer
     """
     # Load document
+
     result = await session.execute(select(Document).where(Document.id == document_id))
     document = result.scalar_one_or_none()
 
@@ -142,9 +144,7 @@ async def release_document(
         raise ValueError(msg)
 
     if document.status != DocumentStatus.IN_REVIEW:
-        msg = (
-            f"Документ {document_id} не находится в обработке (статус: {document.status.value})"
-        )
+        msg = f"Документ {document_id} не находится в обработке (статус: {document.status.value})"
         raise ValueError(msg)
 
     if document.assigned_reviewer_id != reviewer.id:
@@ -180,7 +180,7 @@ async def release_document(
 
 async def resolve_document(  # noqa: PLR0913
     session: AsyncSession,
-    document_id: int,
+    document_id: str,
     reviewer: User,
     final_category: str,
     applicant_name: str | None = None,
@@ -206,6 +206,7 @@ async def resolve_document(  # noqa: PLR0913
         ValueError: If document not found, not claimed by this reviewer
     """
     # Load document and calculate duration
+
     result = await session.execute(select(Document).where(Document.id == document_id))
     document = result.scalar_one_or_none()
 
@@ -214,9 +215,7 @@ async def resolve_document(  # noqa: PLR0913
         raise ValueError(msg)
 
     if document.status != DocumentStatus.IN_REVIEW:
-        msg = (
-            f"Документ {document_id} не находится в обработке (статус: {document.status.value})"
-        )
+        msg = f"Документ {document_id} не находится в обработке (статус: {document.status.value})"
         raise ValueError(msg)
 
     if document.assigned_reviewer_id != reviewer.id:
@@ -284,7 +283,7 @@ async def resolve_document(  # noqa: PLR0913
 
 async def get_document_audit_trail(
     session: AsyncSession,
-    document_id: int,
+    document_id: str,
 ) -> Sequence[ReviewAction]:
     """
     Get audit trail for a document.
@@ -307,7 +306,7 @@ async def get_document_audit_trail(
 
 async def get_document_by_id(
     session: AsyncSession,
-    document_id: int,
+    document_id: str,
 ) -> Document | None:
     """
     Get a document by ID with related data loaded.

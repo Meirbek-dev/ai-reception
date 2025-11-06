@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # Add parent directory to path so we can import our models
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+
 from database import Base
 from models import *  # noqa: F403
 

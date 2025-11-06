@@ -943,7 +943,8 @@ async def process_single_file(  # noqa: PLR0915
                     f"application/{ext[1:]}" if ext == ".pdf" else f"image/{ext[1:]}"
                 )
                 try:
-                    async for session in get_session():
+                    sessionmaker = get_sessionmaker()
+                    async with sessionmaker() as session:
                         metadata = DocumentMetadata(
                             original_name=original_name,
                             file_path=str(
@@ -953,6 +954,8 @@ async def process_single_file(  # noqa: PLR0915
                             mime_type=mime_type,
                             category=category.value,
                             confidence_score=confidence,
+                            applicant_name=name,
+                            applicant_lastname=lastname,
                             text_excerpt=text[:500] if text else None,
                         )
                         doc = await persist_document(session, metadata)
@@ -1098,6 +1101,7 @@ app.add_middleware(
 app.include_router(auth.router)
 
 # Import review router after app is created to avoid circular imports
+
 import review  # noqa: E402
 
 app.include_router(review.router)

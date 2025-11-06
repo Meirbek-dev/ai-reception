@@ -14,7 +14,8 @@ from models import Document, DocumentStatus, DocumentText
 logger = logging.getLogger(__name__)
 
 # Confidence threshold - documents below this go to review queue
-CONFIDENCE_THRESHOLD = 0.7
+# Set to 0.9 to send most documents to review (HITL workflow)
+CONFIDENCE_THRESHOLD = 0.9
 
 
 @dataclass
@@ -27,6 +28,8 @@ class DocumentMetadata:
     mime_type: str
     category: str
     confidence_score: float
+    applicant_name: str
+    applicant_lastname: str
     text_excerpt: str | None = None
 
 
@@ -91,22 +94,22 @@ async def persist_document(
 
     doc = Document(
         original_name=metadata.original_name,
-        file_path=metadata.file_path,
-        file_size=metadata.file_size,
-        mime_type=metadata.mime_type,
-        category=metadata.category,
-        confidence_score=metadata.confidence_score,
+        stored_filename=metadata.file_path,
+        applicant_name=metadata.applicant_name,
+        applicant_lastname=metadata.applicant_lastname,
+        category_predicted=metadata.category,
+        category_confidence=metadata.confidence_score,
         status=status,
+        size_bytes=metadata.file_size,
     )
     session.add(doc)
 
     # If we have text, store excerpt for preview
     if metadata.text_excerpt:
-        excerpt = DocumentText(
-            document_id=doc.id,
+        # Attach via relationship so FK populates after primary key assignment
+        doc.text = DocumentText(
             text_excerpt=metadata.text_excerpt[:5000],  # Limit to config max
         )
-        session.add(excerpt)
 
     await session.flush()  # Ensure doc.id is available
     logger.info(

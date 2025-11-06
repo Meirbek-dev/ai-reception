@@ -120,7 +120,9 @@ def create_session_token(user_id: str, *, remember: bool) -> tuple[str, SessionD
         "exp": int(expires_at.timestamp()),
     }
     token = _serializer.dumps(payload)
-    return token, SessionData(user_id=user_id, remember_me=remember, expires_at=expires_at)
+    return token, SessionData(
+        user_id=user_id, remember_me=remember, expires_at=expires_at
+    )
 
 
 def verify_session_token(token: str) -> SessionData | None:

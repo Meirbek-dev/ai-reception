@@ -7,7 +7,7 @@ const getBackendOrigin = () =>
   import.meta.env?.DEV ? "http://localhost:5040" : window.location.origin;
 
 export interface Document {
-  id: number;
+  id: string;
   original_name: string;
   stored_filename: string;
   applicant_name: string;
@@ -16,7 +16,7 @@ export interface Document {
   category_confidence: number;
   category_final: string | null;
   status: "uploaded" | "queued" | "in_review" | "resolved";
-  assigned_reviewer_id: number | null;
+  assigned_reviewer_id: string | null;
   uploaded_at: string;
   updated_at: string;
   text_excerpt: string | null;
@@ -24,7 +24,7 @@ export interface Document {
 
 export interface ReviewAction {
   id: number;
-  document_id: number;
+  document_id: string;
   reviewer_email: string;
   action: "claim" | "release" | "accept" | "override" | "reject";
   from_category: string | null;
@@ -80,7 +80,7 @@ export async function getReviewQueue(params?: {
 /**
  * Claim a document for review
  */
-export async function claimDocument(documentId: number): Promise<Document> {
+export async function claimDocument(documentId: string): Promise<Document> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/review-queue/${documentId}/claim`,
     {
@@ -100,7 +100,7 @@ export async function claimDocument(documentId: number): Promise<Document> {
 /**
  * Release a claimed document back to queue
  */
-export async function releaseDocument(documentId: number): Promise<Document> {
+export async function releaseDocument(documentId: string): Promise<Document> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/review-queue/${documentId}/release`,
     {
@@ -121,7 +121,7 @@ export async function releaseDocument(documentId: number): Promise<Document> {
  * Resolve a document review
  */
 export async function resolveDocument(
-  documentId: number,
+  documentId: string,
   request: ResolveRequest
 ): Promise<Document> {
   const response = await fetch(
@@ -147,7 +147,7 @@ export async function resolveDocument(
 /**
  * Get document by ID
  */
-export async function getDocument(documentId: number): Promise<Document> {
+export async function getDocument(documentId: string): Promise<Document> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/documents/${documentId}`,
     {
@@ -168,7 +168,7 @@ export async function getDocument(documentId: number): Promise<Document> {
  * Get document preview
  */
 export async function getDocumentPreview(
-  documentId: number
+  documentId: string
 ): Promise<DocumentPreview> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/documents/${documentId}/preview`,
@@ -190,7 +190,7 @@ export async function getDocumentPreview(
  * Get document audit trail
  */
 export async function getDocumentAudit(
-  documentId: number
+  documentId: string
 ): Promise<ReviewAction[]> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/documents/${documentId}/audit`,

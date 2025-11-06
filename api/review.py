@@ -36,7 +36,7 @@ router = APIRouter(prefix="/admin", tags=["review"])
 class DocumentResponse(BaseModel):
     """Document in review queue."""
 
-    id: int
+    id: str
     original_name: str
     stored_filename: str
     applicant_name: str
@@ -45,7 +45,7 @@ class DocumentResponse(BaseModel):
     category_confidence: float
     category_final: str | None
     status: str
-    assigned_reviewer_id: int | None
+    assigned_reviewer_id: str | None
     uploaded_at: str
     updated_at: str
     text_excerpt: str | None = None
@@ -73,8 +73,8 @@ class DocumentResponse(BaseModel):
 class ReviewActionResponse(BaseModel):
     """Review action for audit trail."""
 
-    id: int
-    document_id: int
+    id: str
+    document_id: str
     reviewer_email: str
     action: str
     from_category: str | None
@@ -145,7 +145,7 @@ async def list_review_queue(
     status_code=status.HTTP_200_OK,
 )
 async def claim_document_endpoint(
-    document_id: int,
+    document_id: str,
     current_user: Annotated[
         User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
     ],
@@ -176,7 +176,7 @@ async def claim_document_endpoint(
     status_code=status.HTTP_200_OK,
 )
 async def release_document_endpoint(
-    document_id: int,
+    document_id: str,
     current_user: Annotated[
         User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
     ],
@@ -207,7 +207,7 @@ async def release_document_endpoint(
     status_code=status.HTTP_200_OK,
 )
 async def resolve_document_endpoint(
-    document_id: int,
+    document_id: str,
     resolve_request: ResolveRequest,
     current_user: Annotated[
         User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
@@ -244,7 +244,7 @@ async def resolve_document_endpoint(
     dependencies=[Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))],
 )
 async def get_document(
-    document_id: int,
+    document_id: str,
     session: Annotated[AsyncSession, Depends(get_session)] = None,
 ) -> DocumentResponse:
     """
@@ -267,7 +267,7 @@ async def get_document(
     dependencies=[Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))],
 )
 async def get_document_audit(
-    document_id: int,
+    document_id: str,
     session: Annotated[AsyncSession, Depends(get_session)] = None,
 ) -> list[ReviewActionResponse]:
     """
@@ -295,7 +295,7 @@ async def get_document_audit(
     dependencies=[Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))],
 )
 async def get_document_preview(
-    document_id: int,
+    document_id: str,
     session: Annotated[AsyncSession, Depends(get_session)] = None,
 ) -> JSONResponse:
     """

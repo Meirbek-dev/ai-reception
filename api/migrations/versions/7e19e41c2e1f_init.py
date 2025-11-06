@@ -69,7 +69,12 @@ def upgrade() -> None:
         sa.Column("applicant_name", sa.String(length=128), nullable=False),
         sa.Column("applicant_lastname", sa.String(length=128), nullable=False),
         sa.Column("category_predicted", sa.String(length=64), nullable=False),
-        sa.Column("category_confidence", sa.Float(), nullable=False, server_default=sa.text("0.0")),
+        sa.Column(
+            "category_confidence",
+            sa.Float(),
+            nullable=False,
+            server_default=sa.text("0.0"),
+        ),
         sa.Column("category_final", sa.String(length=64)),
         sa.Column("status", document_status_enum, nullable=False),
         sa.Column("assigned_reviewer_id", sa.String(length=36), nullable=True),
@@ -92,7 +97,9 @@ def upgrade() -> None:
 
     op.create_table(
         "document_texts",
-        sa.Column("document_id", sa.String(length=36), primary_key=True, nullable=False),
+        sa.Column(
+            "document_id", sa.String(length=36), primary_key=True, nullable=False
+        ),
         sa.Column("text_excerpt", sa.Text()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(

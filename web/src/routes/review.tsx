@@ -22,6 +22,14 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import * as reviewApi from "@/lib/review";
 import type { Document } from "@/lib/review";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/review")({
   component: ReviewQueuePage,
@@ -135,9 +143,14 @@ function ReviewQueuePage() {
       setIsLoadingPreview(true);
       reviewApi
         .getDocumentPreview(selectedDoc.id)
-        .then(setPreview)
+        .then((previewData) => {
+          console.log("Preview loaded:", previewData);
+          setPreview(previewData);
+        })
         .catch((error) => {
           console.error("Не удалось загрузить предпросмотр:", error);
+          const message = error instanceof Error ? error.message : "Unknown error";
+          toast.error(`Ошибка загрузки предпросмотра: ${message}`);
           setPreview(null);
         })
         .finally(() => setIsLoadingPreview(false));
@@ -638,7 +651,7 @@ function ReviewQueuePage() {
           <div className="flex h-full flex-col lg:col-span-2">
             {selectedDoc ? (
               <Card className="flex h-full flex-col overflow-hidden">
-                <CardHeader>
+                <CardHeader className="pt-4">
                   <CardTitle>Проверка документа</CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 space-y-6 overflow-y-auto pr-1">
@@ -844,20 +857,21 @@ function ReviewQueuePage() {
                             Итоговая категория{" "}
                             <span className="text-destructive">*</span>
                           </Label>
-                          <select
-                            id="final_category"
+                          <Select
                             value={finalCategory}
-                            onChange={(e) => setFinalCategory(e.target.value)}
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            onValueChange={(v) => setFinalCategory(v)}
                           >
-                            {Object.entries(categoryNames).map(
-                              ([key, name]) => (
-                                <option key={key} value={key}>
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(categoryNames).map(([key, name]) => (
+                                <SelectItem key={key} value={key}>
                                   {name}
-                                </option>
-                              )
-                            )}
-                          </select>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           {finalCategory !==
                             selectedDoc.category_predicted && (
                             <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
@@ -875,11 +889,11 @@ function ReviewQueuePage() {
                               (необязательно)
                             </span>
                           </Label>
-                          <textarea
+                          <Textarea
                             id="comment"
                             value={comment}
                             onChange={(e) => setComment(e.target.value)}
-                            className="flex min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-all resize-none"
+                            className="min-h-24"
                             placeholder="Добавьте комментарии или заметки о документе..."
                           />
                         </div>

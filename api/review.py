@@ -314,12 +314,30 @@ async def get_document_preview(
             detail=f"Документ {document_id} не найден",
         )
 
-    file_path = settings.upload_folder / document.stored_filename
-
-    if not file_path.exists():
+    if not document.stored_filename:
+        logger.warning("Document %s has no stored_filename", document_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Файл документа не найден на диске",
+            detail="Документ не имеет сохраненного файла",
+        )
+
+    # stored_filename is relative to upload_folder.parent
+    file_path = settings.upload_folder.parent / document.stored_filename
+    logger.info(
+        "Preview for document %s: stored_filename=%s, file_path=%s, exists=%s",
+        document_id,
+        document.stored_filename,
+        file_path,
+        file_path.exists(),
+    )
+
+    if not file_path.exists():
+        logger.warning(
+            "File not found for document %s at path: %s", document_id, file_path
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Файл документа не найден на диске: {file_path}",
         )
 
     # Check file extension
@@ -331,6 +349,7 @@ async def get_document_preview(
             # Lazy import to avoid loading heavy dependency unless needed
             from pdf2image import convert_from_path  # noqa: PLC0415
 
+            logger.info("Converting PDF to image: %s", file_path)
             # Convert first page only
             images = convert_from_path(
                 str(file_path),
@@ -348,42 +367,57 @@ async def get_document_preview(
                 # Encode as base64
                 image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
+                logger.info("PDF preview generated successfully for %s", document_id)
                 return JSONResponse(
                     content={
                         "type": "image",
                         "image": f"data:image/png;base64,{image_b64}",
                     }
                 )
+
+            logger.warning("PDF conversion returned no images for %s", document_id)
         except Exception as e:
             msg = f"Не удалось отобразить предпросмотр PDF: {e}"
-            logger.warning(msg)
+            logger.warning(msg, exc_info=True)
             # Падаем к текстовому предпросмотру
 
     # For images, return base64
     if ext in {".jpg", ".jpeg", ".png"}:
-        with file_path.open("rb") as f:
-            image_bytes = f.read()
-            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        try:
+            logger.info("Loading image file: %s", file_path)
+            with file_path.open("rb") as f:
+                image_bytes = f.read()
+                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-            mime_type = "image/jpeg" if ext in {".jpg", ".jpeg"} else "image/png"
+                mime_type = "image/jpeg" if ext in {".jpg", ".jpeg"} else "image/png"
 
-            return JSONResponse(
-                content={
-                    "type": "image",
-                    "image": f"data:{mime_type};base64,{image_b64}",
-                }
-            )
+                logger.info("Image preview generated successfully for %s", document_id)
+                return JSONResponse(
+                    content={
+                        "type": "image",
+                        "image": f"data:{mime_type};base64,{image_b64}",
+                    }
+                )
+        except Exception:
+            logger.exception("Failed to read image file %s", file_path)
 
     # Fallback to text excerpt if available
-    if document.text_content:
+    if document.text and document.text.text_excerpt:
+        logger.info("Returning text preview for document %s", document_id)
         return JSONResponse(
             content={
                 "type": "text",
-                "text": document.text_content[0].text_excerpt,
+                "text": document.text.text_excerpt,
             }
         )
 
     # No preview available
+    logger.warning(
+        "No preview available for document %s (ext=%s, has_text=%s)",
+        document_id,
+        ext,
+        document.text is not None,
+    )
     return JSONResponse(
         content={
             "type": "none",

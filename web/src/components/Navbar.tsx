@@ -217,7 +217,7 @@ export const Navbar = React.memo(function Navbar({
             {/* Center - Title - Absolutely positioned for perfect centering */}
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none hidden lg:block">
               <h1
-                className={`text-xl font-semibold tracking-tight whitespace-nowrap ${
+                className={`text-2xl font-semibold tracking-tight whitespace-nowrap ${
                   isDark ? "text-foreground" : "text-tou"
                 }`}
               >

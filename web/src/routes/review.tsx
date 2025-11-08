@@ -149,7 +149,8 @@ function ReviewQueuePage() {
         })
         .catch((error) => {
           console.error("Не удалось загрузить предпросмотр:", error);
-          const message = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
           toast.error(`Ошибка загрузки предпросмотра: ${message}`);
           setPreview(null);
         })
@@ -160,7 +161,17 @@ function ReviewQueuePage() {
       setApplicantName(selectedDoc.applicant_name);
       setApplicantLastname(selectedDoc.applicant_lastname);
       setComment("");
+    } else {
+      // Clear preview when no document selected
+      setPreview(null);
     }
+
+    // Cleanup blob URL on unmount or when document changes
+    return () => {
+      if (preview?.type === "pdf" && preview.url) {
+        URL.revokeObjectURL(preview.url);
+      }
+    };
   }, [selectedDoc]);
 
   // Claim document
@@ -344,8 +355,7 @@ function ReviewQueuePage() {
       case "queued": {
         return (
           <Badge variant="warning">
-            <Clock className="h-3 w-3" />
-            В очереди
+            <Clock className="h-3 w-3" />В очереди
           </Badge>
         );
       }
@@ -541,8 +551,7 @@ function ReviewQueuePage() {
                       onClick={() => setFilter("queued")}
                       className="flex-1 transition-all"
                     >
-                      <Clock className="h-3.5 w-3.5 mr-1.5" />
-                      В очереди
+                      <Clock className="h-3.5 w-3.5 mr-1.5" />В очереди
                     </Button>
                     <Button
                       variant={filter === "in_review" ? "default" : "outline"}
@@ -769,6 +778,15 @@ function ReviewQueuePage() {
                           Загрузка предпросмотра...
                         </p>
                       </div>
+                    ) : preview?.type === "pdf" && preview.url ? (
+                      <div className="border-2 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow bg-muted/50">
+                        <iframe
+                          src={preview.url}
+                          title="Предпросмотр PDF"
+                          className="w-full h-[600px]"
+                          style={{ border: "none" }}
+                        />
+                      </div>
                     ) : preview?.type === "image" && preview.image ? (
                       <div className="border-2 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow">
                         <img
@@ -865,15 +883,16 @@ function ReviewQueuePage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {Object.entries(categoryNames).map(([key, name]) => (
-                                <SelectItem key={key} value={key}>
-                                  {name}
-                                </SelectItem>
-                              ))}
+                              {Object.entries(categoryNames).map(
+                                ([key, name]) => (
+                                  <SelectItem key={key} value={key}>
+                                    {name}
+                                  </SelectItem>
+                                )
+                              )}
                             </SelectContent>
                           </Select>
-                          {finalCategory !==
-                            selectedDoc.category_predicted && (
+                          {finalCategory !== selectedDoc.category_predicted && (
                             <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
                               <AlertCircle className="h-3 w-3" />
                               Категория изменена с предсказания AI
@@ -882,7 +901,10 @@ function ReviewQueuePage() {
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="comment" className="flex items-center gap-1.5">
+                          <Label
+                            htmlFor="comment"
+                            className="flex items-center gap-1.5"
+                          >
                             <FileText className="h-3.5 w-3.5" />
                             Комментарий{" "}
                             <span className="text-muted-foreground text-xs">

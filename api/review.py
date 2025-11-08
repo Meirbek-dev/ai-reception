@@ -7,16 +7,17 @@ import io
 import logging
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import get_current_user, require_role
 from config import settings
 from database import get_session
-from models import DocumentStatus, ReviewAction, User, UserRole
+from models import Document, DocumentStatus, ReviewAction, User, UserRole
 from review_service import (
     claim_document,
     get_document_audit_trail,
@@ -51,7 +52,7 @@ class DocumentResponse(BaseModel):
     text_excerpt: str | None = None
 
     @classmethod
-    def from_orm(cls, document) -> DocumentResponse:
+    def from_orm(cls, document: Document) -> DocumentResponse:
         """Convert ORM model to response."""
         return cls(
             id=document.id,
@@ -149,7 +150,7 @@ async def claim_document_endpoint(
     current_user: Annotated[
         User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
     ],
-    session: Annotated[AsyncSession, Depends(get_session)] = None,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> DocumentResponse:
     """
     Claim a document for review.
@@ -180,7 +181,7 @@ async def release_document_endpoint(
     current_user: Annotated[
         User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
     ],
-    session: Annotated[AsyncSession, Depends(get_session)] = None,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> DocumentResponse:
     """
     Release a claimed document back to queue.
@@ -212,7 +213,7 @@ async def resolve_document_endpoint(
     current_user: Annotated[
         User, Depends(require_role(UserRole.REVIEWER, UserRole.ADMIN))
     ],
-    session: Annotated[AsyncSession, Depends(get_session)] = None,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> DocumentResponse:
     """
     Resolve a document review.
@@ -296,134 +297,130 @@ async def get_document_audit(
 )
 async def get_document_preview(
     document_id: str,
-    session: Annotated[AsyncSession, Depends(get_session)] = None,
-) -> JSONResponse:
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
     """
-    Get document preview (first page image for PDFs or text excerpt).
+    Get document preview - returns the actual file for PDFs or JSON for images/text.
 
-    Returns JSON with either:
-    - image: base64-encoded image data
-    - text: text excerpt
-    - type: "image" or "text"
+    For PDFs: Returns the actual PDF file with appropriate headers
+    For images: Returns JSON with base64-encoded image data
+    For text: Returns JSON with text excerpt
     """
-    # Get document
-    document = await get_document_by_id(session=session, document_id=document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Документ {document_id} не найден",
-        )
-
-    if not document.stored_filename:
-        logger.warning("Document %s has no stored_filename", document_id)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Документ не имеет сохраненного файла",
-        )
-
-    # stored_filename is relative to upload_folder.parent
-    file_path = settings.upload_folder.parent / document.stored_filename
-    logger.info(
-        "Preview for document %s: stored_filename=%s, file_path=%s, exists=%s",
-        document_id,
-        document.stored_filename,
-        file_path,
-        file_path.exists(),
-    )
-
-    if not file_path.exists():
-        logger.warning(
-            "File not found for document %s at path: %s", document_id, file_path
-        )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Файл документа не найден на диске: {file_path}",
-        )
-
-    # Check file extension
-    ext = file_path.suffix.lower()
-
-    # For PDFs, try to render first page
-    if ext == ".pdf":
-        try:
-            # Lazy import to avoid loading heavy dependency unless needed
-            from pdf2image import convert_from_path  # noqa: PLC0415
-
-            logger.info("Converting PDF to image: %s", file_path)
-            # Convert first page only
-            images = convert_from_path(
-                str(file_path),
-                first_page=1,
-                last_page=1,
-                dpi=150,
+    try:
+        # Get document
+        document = await get_document_by_id(session=session, document_id=document_id)
+        if not document:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Документ {document_id} не найден",
             )
 
-            if images:
-                # Convert to PNG bytes
-                buffer = io.BytesIO()
-                images[0].save(buffer, format="PNG")
-                image_bytes = buffer.getvalue()
+        if not document.stored_filename:
+            logger.warning("Document %s has no stored_filename", document_id)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Документ не имеет сохраненного файла",
+            )
 
-                # Encode as base64
-                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        # stored_filename is relative to upload_folder.parent
+        file_path = settings.upload_folder.parent / document.stored_filename
+        logger.info(
+            "Preview for document %s: stored_filename=%s, file_path=%s, exists=%s",
+            document_id,
+            document.stored_filename,
+            file_path,
+            file_path.exists(),
+        )
 
-                logger.info("PDF preview generated successfully for %s", document_id)
-                return JSONResponse(
-                    content={
-                        "type": "image",
-                        "image": f"data:image/png;base64,{image_b64}",
-                    }
-                )
+        if not file_path.exists():
+            logger.warning(
+                "File not found for document %s at path: %s", document_id, file_path
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Файл документа не найден на диске: {file_path}",
+            )
 
-            logger.warning("PDF conversion returned no images for %s", document_id)
-        except Exception as e:
-            msg = f"Не удалось отобразить предпросмотр PDF: {e}"
-            logger.warning(msg, exc_info=True)
-            # Падаем к текстовому предпросмотру
+        # Check file extension
+        ext = file_path.suffix.lower()
 
-    # For images, return base64
-    if ext in {".jpg", ".jpeg", ".png"}:
-        try:
-            logger.info("Loading image file: %s", file_path)
-            with file_path.open("rb") as f:
-                image_bytes = f.read()
-                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        # For PDFs, return the actual file
+        if ext == ".pdf":
+            logger.info("Serving PDF file: %s", file_path)
+            # Properly encode filename for Content-Disposition header (RFC 5987)
+            encoded_filename = quote(document.original_name.encode("utf-8"))
+            return FileResponse(
+                path=str(file_path),
+                media_type="application/pdf",
+                filename=document.original_name,
+                headers={
+                    "Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}",
+                    "Cache-Control": "private, max-age=3600",
+                },
+            )
 
-                mime_type = "image/jpeg" if ext in {".jpg", ".jpeg"} else "image/png"
+        # For images, return base64
+        if ext in {".jpg", ".jpeg", ".png"}:
+            try:
+                logger.info("Loading image file: %s", file_path)
+                with file_path.open("rb") as f:
+                    image_bytes = f.read()
+                    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-                logger.info("Image preview generated successfully for %s", document_id)
-                return JSONResponse(
-                    content={
-                        "type": "image",
-                        "image": f"data:{mime_type};base64,{image_b64}",
-                    }
-                )
-        except Exception:
-            logger.exception("Failed to read image file %s", file_path)
+                    mime_type = (
+                        "image/jpeg" if ext in {".jpg", ".jpeg"} else "image/png"
+                    )
 
-    # Fallback to text excerpt if available
-    if document.text and document.text.text_excerpt:
-        logger.info("Returning text preview for document %s", document_id)
+                    logger.info(
+                        "Image preview generated successfully for %s", document_id
+                    )
+                    return JSONResponse(
+                        content={
+                            "type": "image",
+                            "image": f"data:{mime_type};base64,{image_b64}",
+                        }
+                    )
+            except Exception as e:
+                logger.exception("Failed to read image file %s", file_path)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Не удалось прочитать изображение",
+                ) from e
+
+        # Fallback to text excerpt if available
+        if document.text and document.text.text_excerpt:
+            logger.info("Returning text preview for document %s", document_id)
+            return JSONResponse(
+                content={
+                    "type": "text",
+                    "text": document.text.text_excerpt,
+                }
+            )
+
+        # No preview available
+        logger.warning(
+            "No preview available for document %s (ext=%s, has_text=%s)",
+            document_id,
+            ext,
+            document.text is not None,
+        )
         return JSONResponse(
             content={
-                "type": "text",
-                "text": document.text.text_excerpt,
+                "type": "none",
+                "message": "Предпросмотр недоступен для этого документа",
             }
         )
 
-    # No preview available
-    logger.warning(
-        "No preview available for document %s (ext=%s, has_text=%s)",
-        document_id,
-        ext,
-        document.text is not None,
-    )
-    return JSONResponse(
-        content={
-            "type": "none",
-            "message": "Предпросмотр недоступен для этого документа",
-        }
-    )
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log and wrap unexpected exceptions
+        logger.exception("Unexpected error in document preview for %s", document_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Внутренняя ошибка сервера при загрузке предпросмотра",
+        ) from e
 
 
 __all__ = ["router"]

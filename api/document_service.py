@@ -51,20 +51,26 @@ def compute_confidence_score(
     if category in {"Unclassified", "ERROR"}:
         return 0.0
 
-    # Start with base confidence
-    confidence = 0.85
+    # Determine base confidence based on match type
+    if fuzzy_score is None:
+        # Exact keyword match - high confidence
+        confidence = 0.95
+    else:
+        # Fuzzy match - confidence based on fuzzy score (0-100)
+        # Scale fuzzy score from 0-100 to 0.6-0.9 range
+        confidence = 0.6 + (fuzzy_score / 100.0) * 0.3
 
-    # If fuzzy matching was used with a score, adjust
-    if fuzzy_score is not None:
-        # fuzzy_score is 0-100, normalize to 0-1
-        confidence = min(confidence, fuzzy_score / 100.0)
-
-    # Penalize very short text (likely poor OCR)
+    # Adjust confidence based on text length
     text_len = len(text.strip())
     if text_len < 50:
+        # Very short text - likely poor OCR
         confidence *= 0.5
     elif text_len < 150:
+        # Short text - somewhat unreliable
         confidence *= 0.75
+    elif text_len < 300:
+        # Medium text - slightly reduce confidence
+        confidence *= 0.9
 
     return round(confidence, 3)
 

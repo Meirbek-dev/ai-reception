@@ -37,7 +37,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_bytes
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
@@ -1085,6 +1085,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add CORS middleware FIRST (middleware is applied in reverse order)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -1093,15 +1094,33 @@ app.add_middleware(
         "https://ai-reception.tou.edu.kz",  # Production domain
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Include routers
+
+# Add exception handler to ensure CORS headers on error responses
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, _exc: Exception) -> JSONResponse:
+    """Handle all unhandled exceptions and ensure CORS headers."""
+    logger.exception("Unhandled exception in %s %s", request.method, request.url.path)
+
+    # Return error with proper CORS headers
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("Origin", "*"),
+            "Access-Control-Allow-Credentials": "true",
+        },
+    )
+
+
+# Include routers AFTER middleware
 app.include_router(auth.router)
 
 # Import review router after app is created to avoid circular imports
-
 import review  # noqa: E402
 
 app.include_router(review.router)

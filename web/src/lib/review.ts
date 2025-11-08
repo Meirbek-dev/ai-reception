@@ -42,10 +42,11 @@ export interface ResolveRequest {
 }
 
 export interface DocumentPreview {
-  type: "image" | "text" | "none";
+  type: "image" | "text" | "none" | "pdf";
   image?: string; // base64 data URL
   text?: string;
   message?: string;
+  url?: string; // URL for PDF files
 }
 
 /**
@@ -183,6 +184,19 @@ export async function getDocumentPreview(
     throw new Error(error.detail || "Не удалось получить предпросмотр");
   }
 
+  // Check if response is PDF
+  const contentType = response.headers.get("Content-Type");
+  if (contentType?.includes("application/pdf")) {
+    // For PDFs, create a blob URL
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    return {
+      type: "pdf",
+      url,
+    };
+  }
+
+  // Otherwise, parse as JSON (image/text/none)
   return response.json();
 }
 

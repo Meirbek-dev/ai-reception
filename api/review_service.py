@@ -99,6 +99,9 @@ async def claim_document(
     document.review_started_at = now
     document.updated_at = now
 
+    # Access text relationship to ensure it's loaded before commit
+    _ = document.text
+
     # Create review action
     action = ReviewAction(
         document_id=document.id,
@@ -112,7 +115,6 @@ async def claim_document(
     session.add(action)
 
     await session.commit()
-    await session.refresh(document)
 
     logger.info(
         f"Документ {document_id} принят рецензентом {reviewer.id} ({reviewer.email})"
@@ -167,6 +169,9 @@ async def release_document(
     document.review_started_at = None
     document.updated_at = datetime.now(UTC)
 
+    # Access text relationship to ensure it's loaded before commit
+    _ = document.text
+
     # Create review action
     action = ReviewAction(
         document_id=document.id,
@@ -180,7 +185,6 @@ async def release_document(
     session.add(action)
 
     await session.commit()
-    await session.refresh(document)
 
     logger.info(
         f"Документ {document_id} возвращён в очередь рецензентом {reviewer.id} ({reviewer.email})"
@@ -252,7 +256,8 @@ async def resolve_document(  # noqa: PLR0913
 
     duration_seconds = None
     if claim_action:
-        duration = datetime.now(UTC) - claim_action.created_at
+        # SQLite stores timestamps as naive UTC, so compare with naive datetime
+        duration = datetime.now(UTC).replace(tzinfo=None) - claim_action.created_at
         duration_seconds = int(duration.total_seconds())
 
     # Determine action type
@@ -287,7 +292,6 @@ async def resolve_document(  # noqa: PLR0913
     session.add(action)
 
     await session.commit()
-    await session.refresh(document)
 
     logger.info(
         f"Документ {document_id} обработан рецензентом {reviewer.id} "

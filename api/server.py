@@ -61,10 +61,19 @@ from document_service import (
     persist_document,
 )
 
+# Configure logging BEFORE any other imports that might use logging
 logging.basicConfig(
-    level=getattr(logging, settings.log_level),
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
 )
+
+# Set specific loggers to DEBUG
+logging.getLogger("review").setLevel(logging.DEBUG)
+logging.getLogger("review_service").setLevel(logging.DEBUG)
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 
@@ -1066,7 +1075,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
                 logger.exception("Cleanup loop error")
 
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
-    logger.info("Application started")
 
     yield
 
@@ -1532,10 +1540,18 @@ if __name__ == "__main__":
     is_prod = str(env).lower() == "production"
     reload_enabled = not is_prod
 
+    # Configure uvicorn logging to use our log level and show our app logs
+    log_config = uvicorn.config.LOGGING_CONFIG
+    log_config["formatters"]["default"]["fmt"] = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    log_config["formatters"]["access"]["fmt"] = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    log_config["loggers"]["review"] = {"handlers": ["default"], "level": "DEBUG"}
+    log_config["loggers"]["review_service"] = {"handlers": ["default"], "level": "DEBUG"}
+
     uvicorn.run(
         app,
         host=host,
         port=port,
         reload=reload_enabled,
-        log_level=settings.log_level.lower(),
+        log_level="debug",  # Force debug level
+        log_config=log_config,
     )

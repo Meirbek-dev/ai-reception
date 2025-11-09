@@ -54,21 +54,32 @@ class DocumentResponse(BaseModel):
     @classmethod
     def from_orm(cls, document: Document) -> DocumentResponse:
         """Convert ORM model to response."""
-        return cls(
-            id=document.id,
-            original_name=document.original_name,
-            stored_filename=document.stored_filename or "",
-            applicant_name=document.applicant_name,
-            applicant_lastname=document.applicant_lastname,
-            category_predicted=document.category_predicted,
-            category_confidence=document.category_confidence,
-            category_final=document.category_final,
-            status=document.status.value,
-            assigned_reviewer_id=document.assigned_reviewer_id,
-            uploaded_at=document.created_at.isoformat(),
-            updated_at=document.updated_at.isoformat(),
-            text_excerpt=(document.text.text_excerpt if document.text else None),
-        )
+        try:
+            text_excerpt = None
+            if document.text:
+                text_excerpt = document.text.text_excerpt
+            else:
+                logger.warning(f"Document {document.id} has no text relationship")
+
+            response = cls(
+                id=document.id,
+                original_name=document.original_name,
+                stored_filename=document.stored_filename or "",
+                applicant_name=document.applicant_name,
+                applicant_lastname=document.applicant_lastname,
+                category_predicted=document.category_predicted,
+                category_confidence=document.category_confidence,
+                category_final=document.category_final,
+                status=document.status.value,
+                assigned_reviewer_id=document.assigned_reviewer_id,
+                uploaded_at=document.created_at.isoformat(),
+                updated_at=document.updated_at.isoformat(),
+                text_excerpt=text_excerpt,
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error in from_orm for document {document.id}: {e}", exc_info=True)
+            raise
 
 
 class ReviewActionResponse(BaseModel):
@@ -221,6 +232,12 @@ async def resolve_document_endpoint(
     Changes status from IN_REVIEW to RESOLVED, records final category
     and reviewer actions.
     """
+    logger.info(
+        f"Resolve request for document {document_id} by user {current_user.email}: "
+        f"final_category={resolve_request.final_category}, "
+        f"applicant_name={resolve_request.applicant_name}, "
+        f"applicant_lastname={resolve_request.applicant_lastname}"
+    )
     try:
         document = await resolve_document(
             session=session,
@@ -231,11 +248,38 @@ async def resolve_document_endpoint(
             applicant_lastname=resolve_request.applicant_lastname,
             comment=resolve_request.comment,
         )
-        return DocumentResponse.from_orm(document)
+        logger.info(f"Document {document_id} resolved successfully, creating response")
+
+        try:
+            response = DocumentResponse.from_orm(document)
+            logger.info(f"Response created successfully for document {document_id}")
+            return response
+        except Exception as e:
+            print(f"[RESOLVE] ERROR in from_orm: {type(e).__name__}: {e}")  # DEBUG
+            logger.error(
+                f"Error creating DocumentResponse for {document_id}: {e}",
+                exc_info=True
+            )
+            raise
+
     except ValueError as e:
+        print(f"[RESOLVE] ValueError: {e}")  # DEBUG
+        logger.warning(f"ValueError resolving document {document_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+        ) from e
+    except Exception as e:
+        print(f"[RESOLVE] UNEXPECTED ERROR: {type(e).__name__}: {e}")  # DEBUG
+        import traceback
+        traceback.print_exc()  # Print full traceback to console
+        logger.error(
+            f"Unexpected error resolving document {document_id}: {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while resolving document",
         ) from e
 
 

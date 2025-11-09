@@ -118,8 +118,9 @@ function ReviewQueuePage() {
   const loadDocuments = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Always load all documents to show accurate counts in statistics
       const docs = await reviewApi.getReviewQueue({
-        status: filter === "all" ? undefined : filter,
+        status: undefined,
       });
       setDocuments(docs);
     } catch (error) {
@@ -129,7 +130,7 @@ function ReviewQueuePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [filter]);
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !isRefreshing && isAuthenticated) {
@@ -186,10 +187,18 @@ function ReviewQueuePage() {
       const message =
         error instanceof Error ? error.message : "Не удалось принять документ";
       toast.error(message);
+
+      // Refresh documents to sync state with backend
+      await loadDocuments();
+
+      // Clear selection if document state changed
+      if (selectedDoc?.id === doc.id) {
+        setSelectedDoc(null);
+      }
     } finally {
       setIsClaiming(false);
     }
-  }, []);
+  }, [loadDocuments, selectedDoc]);
 
   // Release document
   const handleRelease = useCallback(
@@ -339,8 +348,12 @@ function ReviewQueuePage() {
     return () => window.removeEventListener("keydown", handleKeyPress);
   }, [selectedDoc, user, handleClaim, handleRelease, handleResolve]);
 
-  // Filter documents by search
+  // Filter documents by search and status
   const filteredDocs = documents.filter((doc) => {
+    // Apply status filter
+    if (filter !== "all" && doc.status !== filter) return false;
+
+    // Apply search filter
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (

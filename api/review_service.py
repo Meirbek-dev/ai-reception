@@ -71,9 +71,13 @@ async def claim_document(
     Raises:
         ValueError: If document not found, already claimed, or not in queued status
     """
-    # Load document
+    # Load document with text relationship
 
-    result = await session.execute(select(Document).where(Document.id == document_id))
+    result = await session.execute(
+        select(Document)
+        .options(selectinload(Document.text))
+        .where(Document.id == document_id)
+    )
     document = result.scalar_one_or_none()
 
     if not document:
@@ -89,9 +93,11 @@ async def claim_document(
         raise ValueError(msg)
 
     # Claim document
+    now = datetime.now(UTC)
     document.assigned_reviewer_id = reviewer.id
     document.status = DocumentStatus.IN_REVIEW
-    document.updated_at = datetime.now(UTC)
+    document.review_started_at = now
+    document.updated_at = now
 
     # Create review action
     action = ReviewAction(
@@ -134,9 +140,13 @@ async def release_document(
     Raises:
         ValueError: If document not found, not claimed by this reviewer
     """
-    # Load document
+    # Load document with text relationship
 
-    result = await session.execute(select(Document).where(Document.id == document_id))
+    result = await session.execute(
+        select(Document)
+        .options(selectinload(Document.text))
+        .where(Document.id == document_id)
+    )
     document = result.scalar_one_or_none()
 
     if not document:
@@ -154,6 +164,7 @@ async def release_document(
     # Release document
     document.assigned_reviewer_id = None
     document.status = DocumentStatus.QUEUED
+    document.review_started_at = None
     document.updated_at = datetime.now(UTC)
 
     # Create review action
@@ -205,9 +216,13 @@ async def resolve_document(  # noqa: PLR0913
     Raises:
         ValueError: If document not found, not claimed by this reviewer
     """
-    # Load document and calculate duration
+    # Load document with text relationship and calculate duration
 
-    result = await session.execute(select(Document).where(Document.id == document_id))
+    result = await session.execute(
+        select(Document)
+        .options(selectinload(Document.text))
+        .where(Document.id == document_id)
+    )
     document = result.scalar_one_or_none()
 
     if not document:
@@ -248,9 +263,11 @@ async def resolve_document(  # noqa: PLR0913
     )
 
     # Update document
+    now = datetime.now(UTC)
     document.category_final = final_category
     document.status = DocumentStatus.RESOLVED
-    document.updated_at = datetime.now(UTC)
+    document.resolved_at = now
+    document.updated_at = now
 
     if applicant_name is not None:
         document.applicant_name = applicant_name

@@ -36,6 +36,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +44,7 @@ from pdf2image import convert_from_bytes
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel
 from rapidfuzz import fuzz
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import auth
 from config import settings
@@ -1100,18 +1102,35 @@ app.add_middleware(
 )
 
 
-# Add exception handler to ensure CORS headers on error responses
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, _exc: Exception) -> JSONResponse:
-    """Handle all unhandled exceptions and ensure CORS headers."""
-    logger.exception("Unhandled exception in %s %s", request.method, request.url.path)
+# Add exception handlers to ensure CORS headers on error responses
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_cors_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    """Preserve HTTP error status codes while attaching CORS headers."""
+    response = await http_exception_handler(request, exc)
+    origin = request.headers.get("Origin")
+    response.headers["Access-Control-Allow-Origin"] = origin or "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
-    # Return error with proper CORS headers
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unexpected errors and ensure CORS headers."""
+    logger.exception(
+        "Unhandled exception in %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+    )
+
+    origin = request.headers.get("Origin")
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
         headers={
-            "Access-Control-Allow-Origin": request.headers.get("Origin", "*"),
+            "Access-Control-Allow-Origin": origin or "*",
             "Access-Control-Allow-Credentials": "true",
         },
     )

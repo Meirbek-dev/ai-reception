@@ -14,8 +14,7 @@ from models import Document, DocumentStatus, DocumentText
 logger = logging.getLogger(__name__)
 
 # Confidence threshold - documents below this go to review queue
-# Set to 0.9 to send most documents to review (HITL workflow)
-CONFIDENCE_THRESHOLD = 0.9
+CONFIDENCE_THRESHOLD = 0.95
 
 
 @dataclass

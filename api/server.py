@@ -1542,10 +1542,17 @@ if __name__ == "__main__":
 
     # Configure uvicorn logging to use our log level and show our app logs
     log_config = uvicorn.config.LOGGING_CONFIG
-    log_config["formatters"]["default"]["fmt"] = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    log_config["formatters"]["access"]["fmt"] = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    log_config["formatters"]["default"]["fmt"] = (
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    log_config["formatters"]["access"]["fmt"] = (
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     log_config["loggers"]["review"] = {"handlers": ["default"], "level": "DEBUG"}
-    log_config["loggers"]["review_service"] = {"handlers": ["default"], "level": "DEBUG"}
+    log_config["loggers"]["review_service"] = {
+        "handlers": ["default"],
+        "level": "DEBUG",
+    }
 
     uvicorn.run(
         app,

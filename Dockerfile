@@ -4,7 +4,7 @@
 # 3) runtime: copy venv and built frontend, install runtime OS packages and run uvicorn
 
 # --- Frontend builder -----------------------------------------------------
-FROM node:24-slim AS frontend-builder
+FROM node:25-slim AS frontend-builder
 WORKDIR /workspace
 
 # Install pnpm

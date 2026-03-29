@@ -1,7 +1,8 @@
 import { URL, fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import viteReact from "@vitejs/plugin-react";
+import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
 import { defineConfig } from "vite";
 
 // https://vitejs.dev/config/
@@ -11,10 +12,9 @@ export default defineConfig({
       target: "react",
       autoCodeSplitting: true,
     }),
-    viteReact({
-      babel: {
-        plugins: ['babel-plugin-react-compiler'],
-      },
+    viteReact(),
+    babel({
+      presets: [reactCompilerPreset()],
     }),
     tailwindcss(),
   ],

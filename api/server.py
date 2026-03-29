@@ -1116,6 +1116,30 @@ async def http_exception_cors_handler(
     request: Request, exc: StarletteHTTPException
 ) -> JSONResponse:
     """Preserve HTTP error status codes while attaching CORS headers."""
+
+    # SPA route fallback: if client-side route is requested directly, serve index.html
+    # allowing the frontend router to resolve it.
+    if exc.status_code == 404:
+        # Preserve backend API 404s
+        api_prefixes = (
+            "/auth",
+            "/admin",
+            "/upload",
+            "/files",
+            "/download",
+            "/download_zip",
+            "/icons",
+            "/health",
+        )
+        if not request.url.path.startswith(api_prefixes):
+            index_file = settings.web_build_folder / "index.html"
+            if index_file.exists():
+                response = FileResponse(index_file, media_type="text/html")
+                origin = request.headers.get("Origin")
+                response.headers["Access-Control-Allow-Origin"] = origin or "*"
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+                return response
+
     response = await http_exception_handler(request, exc)
     origin = request.headers.get("Origin")
     response.headers["Access-Control-Allow-Origin"] = origin or "*"

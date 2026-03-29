@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Eye, EyeOff, Loader2, Lock, Mail } from "lucide-react";
 
-export interface Login03Props {
+export interface LoginProps {
   email: string;
   password: string;
   rememberMe?: boolean;
@@ -29,7 +29,7 @@ export interface Login03Props {
   ctaLabel?: string;
 }
 
-export default function Login03({
+export default function Login({
   email,
   password,
   rememberMe = false,
@@ -41,7 +41,7 @@ export default function Login03({
   title = "Добро пожаловать",
   subtitle = "Введите ваши учетные данные чтобы войти.",
   ctaLabel = "Войти",
-}: Login03Props) {
+}: LoginProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);

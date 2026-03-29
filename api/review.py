@@ -61,7 +61,7 @@ class DocumentResponse(BaseModel):
             else:
                 logger.warning(f"Document {document.id} has no text relationship")
 
-            response = cls(
+            return cls(
                 id=document.id,
                 original_name=document.original_name,
                 stored_filename=document.stored_filename or "",
@@ -76,9 +76,10 @@ class DocumentResponse(BaseModel):
                 updated_at=document.updated_at.isoformat(),
                 text_excerpt=text_excerpt,
             )
-            return response
         except Exception as e:
-            logger.error(f"Error in from_orm for document {document.id}: {e}", exc_info=True)
+            logger.error(
+                f"Error in from_orm for document {document.id}: {e}", exc_info=True
+            )
             raise
 
 
@@ -257,8 +258,7 @@ async def resolve_document_endpoint(
         except Exception as e:
             print(f"[RESOLVE] ERROR in from_orm: {type(e).__name__}: {e}")  # DEBUG
             logger.error(
-                f"Error creating DocumentResponse for {document_id}: {e}",
-                exc_info=True
+                f"Error creating DocumentResponse for {document_id}: {e}", exc_info=True
             )
             raise
 
@@ -272,10 +272,10 @@ async def resolve_document_endpoint(
     except Exception as e:
         print(f"[RESOLVE] UNEXPECTED ERROR: {type(e).__name__}: {e}")  # DEBUG
         import traceback
+
         traceback.print_exc()  # Print full traceback to console
         logger.error(
-            f"Unexpected error resolving document {document_id}: {e}",
-            exc_info=True
+            f"Unexpected error resolving document {document_id}: {e}", exc_info=True
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

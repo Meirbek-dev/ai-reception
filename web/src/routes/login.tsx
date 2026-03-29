@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import Login03 from "@/components/login-03";
+import Login from "@/components/login";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -67,7 +67,7 @@ function LoginPage() {
 
   if (authLoading) {
     return (
-      <Login03
+      <Login
         email={email}
         password={password}
         rememberMe={rememberMe}
@@ -84,7 +84,7 @@ function LoginPage() {
   }
 
   return (
-    <Login03
+    <Login
       email={email}
       password={password}
       rememberMe={rememberMe}

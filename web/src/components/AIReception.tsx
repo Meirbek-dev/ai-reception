@@ -22,12 +22,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { Navbar } from "@/components/Navbar";
-import type { DropzoneHandle } from "@/components/kibo-ui/dropzone";
+import type { DropzoneHandle } from "@/components/ui/dropzone";
 import {
   Dropzone,
   DropzoneContent,
   DropzoneEmptyState,
-} from "@/components/kibo-ui/dropzone";
+} from "@/components/ui/dropzone";
 import {
   AlertDialog,
   AlertDialogAction,

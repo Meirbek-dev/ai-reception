@@ -70,8 +70,8 @@ const strings = {
   nameLabel: "Имя",
   lastNameLabel: "Фамилия",
   uploadBtn: "Загрузить документы",
-  uploading: "Обработка файлов...",
-  uploadSuccess: "Документы успешно обработаны и классифицированы",
+  uploading: "Отправка файлов...",
+  uploadSuccess: "Файлы приняты в обработку",
   uploadFail: "Ошибка при загрузке файлов. Попробуйте снова.",
   invalidFileType: "Неверный формат файла. Поддерживаются PDF, JPG, PNG.",
   invalidForm: "Пожалуйста, заполните имя и фамилию корректно.",
@@ -105,6 +105,16 @@ const categoryInfo: Record<string, CategoryInfo> = {
     name: "Неизвестно",
     icon: HelpCircle,
     color: "rgb(117, 117, 117)", // Grey
+  },
+  __processing: {
+    name: "В обработке",
+    icon: RefreshCw,
+    color: "rgb(59, 130, 246)",
+  },
+  __failed: {
+    name: "Ошибка обработки",
+    icon: HelpCircle,
+    color: "rgb(220, 38, 38)",
   },
   Privivka: {
     name: "Прививочный паспорт",
@@ -141,6 +151,46 @@ const getFileIcon = (filename?: string) => {
 const normalizeCategoryKey = (raw?: string | null): string => {
   if (!raw) return "Unclassified";
   return String(raw).trim();
+};
+
+const getFileStatus = (file: UploadedFile): string => file.status || "uploaded";
+
+const isProcessingFile = (file: UploadedFile): boolean =>
+  getFileStatus(file) === "processing";
+
+const canDownloadFile = (file: UploadedFile): boolean => {
+  const status = getFileStatus(file);
+  return Boolean(
+    file.id &&
+      file.newName &&
+      !["processing", "failed", "unclassified"].includes(status),
+  );
+};
+
+const getFileGroupKey = (file: UploadedFile): string => {
+  const status = getFileStatus(file);
+  if (status === "processing") return "__processing";
+  if (status === "failed") return "__failed";
+  return normalizeCategoryKey(file.category);
+};
+
+const getStatusText = (file: UploadedFile): string | null => {
+  switch (getFileStatus(file)) {
+    case "processing":
+      return "Обрабатывается";
+    case "queued":
+      return "Передан на ручную проверку";
+    case "uploaded":
+      return "Классифицирован";
+    case "resolved":
+      return "Проверен вручную";
+    case "unclassified":
+      return "Не удалось классифицировать";
+    case "failed":
+      return "Ошибка обработки";
+    default:
+      return null;
+  }
 };
 
 // Split into smaller components to reduce re-renders. Keep them in the same file
@@ -348,6 +398,11 @@ const FileRow = React.memo(function FileRow({
             Сохранено как {file.newName}
           </p>
         )}
+        {getStatusText(file) && (
+          <p className="text-xs text-muted-foreground mt-1 font-medium">
+            {getStatusText(file)}
+          </p>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
@@ -355,7 +410,7 @@ const FileRow = React.memo(function FileRow({
           checked={selected}
           onCheckedChange={() => onToggle(file.uid)}
         />
-        {normalizeCategoryKey(file.category) !== "Unclassified" && (
+        {canDownloadFile(file) && (
           <Button
             variant="ghost"
             size="icon"
@@ -399,6 +454,7 @@ const FileGroup = React.memo(function FileGroup({
     color: "rgb(156, 163, 175)",
   };
   const Icon = info.icon;
+  const downloadableFiles = categoryFiles.filter(canDownloadFile);
 
   return (
     <Card
@@ -418,13 +474,13 @@ const FileGroup = React.memo(function FileGroup({
               {info.name} ({categoryFiles.length})
             </span>
           </div>
-          {category !== "Unclassified" && (
+          {downloadableFiles.length > 0 && (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => {
-                categoryFiles.forEach((f) => {
-                  if (f.id) onDownloadFile(f);
+                downloadableFiles.forEach((f) => {
+                  onDownloadFile(f);
                 });
               }}
               className="hover:scale-105 transition-all duration-300"
@@ -504,6 +560,69 @@ export default function AIReceptionApp() {
   // Recreate handlers with stable identities where useful
   const toggleDark = useCallback(() => setIsDark((v) => !v), []);
 
+  const fetchFilesForApplicant = useCallback(
+    async (applicantName: string, applicantLastName: string) => {
+      const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
+        applicantName,
+      )}&lastname=${encodeURIComponent(applicantLastName)}`;
+      const filesResponse = await fetch(filesUrl);
+      if (!filesResponse.ok) {
+        throw new Error(`Failed to fetch files: ${filesResponse.status}`);
+      }
+
+      return (await filesResponse.json()) as UploadedFile[];
+    },
+    [],
+  );
+
+  const pollFilesUntilSettled = useCallback(
+    async (applicantName: string, applicantLastName: string) => {
+      for (let attempt = 0; attempt < 45; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+
+        try {
+          const snapshot = await fetchFilesForApplicant(
+            applicantName,
+            applicantLastName,
+          );
+          setFiles(snapshot);
+
+          if (!snapshot.some(isProcessingFile)) {
+            const failedCount = snapshot.filter(
+              (file) => getFileStatus(file) === "failed",
+            ).length;
+            const unclassifiedCount = snapshot.filter(
+              (file) => getFileStatus(file) === "unclassified",
+            ).length;
+            const successCount = snapshot.filter((file) =>
+              ["uploaded", "queued", "resolved"].includes(
+                getFileStatus(file),
+              ),
+            ).length;
+
+            if (successCount > 0 && failedCount === 0 && unclassifiedCount === 0) {
+              toast.success("Все документы обработаны");
+            } else if (successCount > 0) {
+              toast.warning(
+                `Обработано ${successCount} документов. ${unclassifiedCount > 0 ? `${unclassifiedCount} не удалось классифицировать. ` : ""}${failedCount > 0 ? `${failedCount} завершились ошибкой.` : ""}`,
+              );
+            } else if (unclassifiedCount > 0 || failedCount > 0) {
+              toast.warning(
+                `${unclassifiedCount > 0 ? `${unclassifiedCount} документов не удалось классифицировать. ` : ""}${failedCount > 0 ? `${failedCount} завершились ошибкой.` : ""}`,
+              );
+            }
+
+            return;
+          }
+        } catch (error) {
+          console.error("Ошибка фонового обновления списка файлов:", error);
+          return;
+        }
+      }
+    },
+    [fetchFilesForApplicant],
+  );
+
   const uploadFiles = useCallback(
     async (fileList: File[]) => {
       if (isLoading) return;
@@ -537,29 +656,24 @@ export default function AIReceptionApp() {
         }
 
         const uploadResult = (await response.json().catch(() => ({}))) as {
+          accepted?: UploadedFile[];
           success?: UploadedFile[];
-          unclassified?: UploadedFile[];
           failed?: { filename: string; error: string }[];
           summary?: Record<string, number>;
         };
 
-        const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          name,
-        )}&lastname=${encodeURIComponent(lastName)}`;
-        const filesResponse = await fetch(filesUrl).catch(() => null);
         let persisted: UploadedFile[] = [];
-        if (filesResponse && filesResponse.ok) {
-          persisted = (await filesResponse.json()) as UploadedFile[];
+        try {
+          persisted = await fetchFilesForApplicant(name, lastName);
+        } catch (error) {
+          console.error("Не удалось получить список файлов после загрузки:", error);
         }
 
         if (uploadResult.failed && uploadResult.failed.length > 0) {
           console.warn("Upload: failed files", uploadResult.failed);
         }
 
-        const returned: UploadedFile[] = [
-          ...(uploadResult.success || []),
-          ...(uploadResult.unclassified || []),
-        ];
+        const returned: UploadedFile[] = uploadResult.accepted || uploadResult.success || [];
 
         const merged = [
           ...returned,
@@ -574,30 +688,13 @@ export default function AIReceptionApp() {
         setFiles(merged as UploadedFile[]);
 
         const failedCount = uploadResult.failed?.length ?? 0;
-        const successCount = uploadResult.success?.length ?? 0;
-        const unclassifiedCount = uploadResult.unclassified?.length ?? 0;
+        const acceptedCount = returned.length;
         try {
-          if (
-            successCount > 0 &&
-            failedCount === 0 &&
-            unclassifiedCount === 0
-          ) {
+          if (acceptedCount > 0 && failedCount === 0) {
             toast.success(strings.uploadSuccess);
-          } else if (
-            successCount > 0 &&
-            (failedCount > 0 || unclassifiedCount > 0)
-          ) {
-            const notOk = failedCount + unclassifiedCount;
+          } else if (acceptedCount > 0 && failedCount > 0) {
             toast.warning(
-              `Классифицировано ${successCount} из ${successCount + notOk} файлов. ${unclassifiedCount > 0 ? `${unclassifiedCount} не удалось классифицировать. ` : ""}${failedCount > 0 ? `${failedCount} не удалось обработать.` : ""}`,
-            );
-          } else if (
-            unclassifiedCount > 0 &&
-            successCount === 0 &&
-            failedCount === 0
-          ) {
-            toast.warning(
-              `Не удалось классифицировать ${unclassifiedCount} файл(ов). Тип документов не распознан.`,
+              `Принято ${acceptedCount} файлов. ${failedCount} не удалось отправить в обработку.`,
             );
           } else {
             toast.error(
@@ -608,6 +705,10 @@ export default function AIReceptionApp() {
           }
         } catch {
           /* ignore if toast not available during SSR */
+        }
+
+        if ((persisted.length > 0 ? persisted : returned).some(isProcessingFile)) {
+          void pollFilesUntilSettled(name, lastName);
         }
       } catch (error) {
         console.error("Ошибка загрузки:", error);
@@ -620,7 +721,7 @@ export default function AIReceptionApp() {
         setIsLoading(false);
       }
     },
-    [isLoading, name, lastName],
+    [fetchFilesForApplicant, isLoading, lastName, name, pollFilesUntilSettled],
   );
 
   const handleDrop = useCallback(
@@ -667,7 +768,7 @@ export default function AIReceptionApp() {
 
   const deleteFile = useCallback(
     async (file: UploadedFile) => {
-      if (!file.id || normalizeCategoryKey(file.category) === "Unclassified") {
+      if (!file.id) {
         setFiles((prev) => prev.filter((f) => f !== file));
         return;
       }
@@ -693,30 +794,18 @@ export default function AIReceptionApp() {
           return;
         }
 
-        const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          useName,
-        )}&lastname=${encodeURIComponent(useLast)}`;
-        const filesResponse = await fetch(filesUrl);
-        if (!filesResponse.ok) {
-          console.error(
-            "Не удалось получить список файлов после удаления",
-            filesResponse.status,
-          );
-          return;
-        }
-
-        const filesData = await filesResponse.json();
-        setFiles(filesData as UploadedFile[]);
+        const filesData = await fetchFilesForApplicant(useName, useLast);
+        setFiles(filesData);
       } catch (error) {
         console.error("Ошибка удаления:", error);
       }
     },
-    [name, lastName, queriedName, queriedLastName],
+    [fetchFilesForApplicant, name, lastName, queriedName, queriedLastName],
   );
 
   const downloadFile = useCallback(
     (file: UploadedFile) => {
-      if (!file.id) return;
+      if (!canDownloadFile(file) || !file.id) return;
       const useName = queriedName ?? name;
       const useLast = queriedLastName ?? lastName;
 
@@ -791,7 +880,7 @@ export default function AIReceptionApp() {
   const groupedFiles = React.useMemo(() => {
     return files.reduce(
       (acc, file) => {
-        const categoryKey = normalizeCategoryKey(file.category);
+        const categoryKey = getFileGroupKey(file);
         if (!acc[categoryKey]) acc[categoryKey] = [];
         acc[categoryKey].push(file);
         return acc;

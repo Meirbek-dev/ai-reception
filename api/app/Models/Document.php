@@ -19,12 +19,17 @@ class Document extends Model
         'id',
         'original_name',
         'stored_filename',
+        'processing_path',
+        'processing_error',
         'applicant_name',
+        'applicant_name_normalized',
         'applicant_lastname',
+        'applicant_lastname_normalized',
         'category_predicted',
         'category_confidence',
         'category_final',
         'status',
+        'processing_state',
         'assigned_reviewer_id',
         'review_started_at',
         'resolved_at',
@@ -39,6 +44,16 @@ class Document extends Model
             'resolved_at'         => 'datetime',
             'size_bytes'          => 'integer',
         ];
+    }
+
+    public function effectiveStatus(): string
+    {
+        return $this->processing_state ?: $this->status;
+    }
+
+    public function effectiveCategory(): string
+    {
+        return $this->category_final ?: $this->category_predicted;
     }
 
     public function reviewer(): BelongsTo

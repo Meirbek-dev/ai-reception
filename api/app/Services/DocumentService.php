@@ -2,8 +2,11 @@
 
 namespace App\Services;
 
+use App\Jobs\ProcessUploadedDocument;
 use App\Models\Document;
 use App\Models\DocumentText;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class DocumentService
@@ -24,112 +27,130 @@ class DocumentService
     // -------------------------------------------------------------------------
 
     /**
-     * Process a single uploaded file: OCR → classify → persist → move to storage.
-     * Returns a client-facing array (matches processed_file_to_client() from Python).
+     * Queue a single uploaded file for asynchronous OCR/classification.
      */
-    public function processFile(
-        string $tmpPath,
-        string $originalName,
-        string $name,
-        string $lastname
-    ): array {
-        $ext      = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-        $fileId   = (string) Str::uuid();
-        $size     = filesize($tmpPath);
-        $modified = time();
+    public function queueFile(UploadedFile $file, string $name, string $lastname): array
+    {
+        $fileId       = (string) Str::uuid();
+        $originalName = $file->getClientOriginalName();
+        $ext          = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+        $pendingRel   = 'uploads/pending/'.$fileId.($ext !== '' ? '.'.$ext : '');
+        $pendingPath  = $this->absoluteStoragePath($pendingRel);
+        $size         = (int) ($file->getSize() ?? 0);
 
-        // OCR — pass the original extension so OcrService can handle generic PHP
-        // temp paths (e.g. phpF6B6.tmp on Windows) that carry no useful extension.
-        $text   = $this->ocr->extractText($tmpPath, $ext);
-        $result = $this->classifier->classify($text);
+        $this->ensureDirectory(dirname($pendingPath));
 
-        $category   = $result['category'];
-        $confidence = $result['confidence'];
-        $fuzzyScore = $result['fuzzy_score'];
-        $status     = $this->classifier->determineStatus($confidence);
-
-        if ($category === 'Unclassified') {
-            @unlink($tmpPath);
+        if (! $this->moveProcessedFile((string) $file->getRealPath(), $pendingPath)) {
             return $this->buildClientPayload(
-                $fileId, $originalName, $category, '', $size, $modified, 'unclassified', $confidence, null
+                $fileId,
+                $originalName,
+                'Unclassified',
+                '',
+                $size,
+                time(),
+                'failed',
+                0.0,
+                null,
+                'failed to persist uploaded file'
             );
         }
 
-        // Build filename: {name}_{lastname}_{category}_{idx}_{uuid}.{ext}
-        $safeName     = $this->sanitizeName($name);
-        $safeLastname = $this->sanitizeName($lastname);
-        $storedName   = null;
-        $destPath     = null;
+        $document = Document::create([
+            'id'                           => $fileId,
+            'original_name'                => $originalName,
+            'stored_filename'              => null,
+            'processing_path'              => $pendingRel,
+            'processing_error'             => null,
+            'applicant_name'               => $name,
+            'applicant_name_normalized'    => $this->normalizeApplicantLookup($name),
+            'applicant_lastname'           => $lastname,
+            'applicant_lastname_normalized'=> $this->normalizeApplicantLookup($lastname),
+            'category_predicted'           => 'Unclassified',
+            'category_confidence'          => 0.0,
+            'category_final'               => null,
+            'status'                       => 'uploaded',
+            'processing_state'             => 'processing',
+            'size_bytes'                   => $size,
+        ]);
 
-        if (! is_dir($this->uploadDir)) {
-            mkdir($this->uploadDir, 0755, true);
+        ProcessUploadedDocument::dispatch($document->id);
+
+        return $this->payloadFromDocument($document->fresh());
+    }
+
+    public function processQueuedDocument(string $documentId): void
+    {
+        /** @var Document|null $document */
+        $document = Document::query()->find($documentId);
+
+        if (! $document || ! $document->processing_path) {
+            return;
         }
 
-        for ($idx = 1; $idx <= 100; $idx++) {
-            $candidate = "{$safeName}_{$safeLastname}_{$category}_{$idx}_{$fileId}.{$ext}";
-            $dest      = $this->uploadDir.'/'.$candidate;
-            if (! file_exists($dest)) {
-                if (! $this->moveProcessedFile($tmpPath, $dest)) {
-                    return $this->buildClientPayload(
-                        $fileId,
-                        $originalName,
-                        $category,
-                        '',
-                        $size,
-                        $modified,
-                        'error: failed to persist uploaded file',
-                        $confidence,
-                        null
-                    );
-                }
-                $storedName = $candidate;
-                $destPath   = $dest;
-                break;
-            }
+        $pendingPath = $this->absoluteStoragePath($document->processing_path);
+        if (! is_file($pendingPath)) {
+            $this->markProcessingFailure($document, 'pending upload file is missing');
+            return;
         }
 
-        if ($storedName === null) {
-            @unlink($tmpPath);
-            return $this->buildClientPayload(
-                $fileId, $originalName, $category, '', $size, $modified,
-                'error: too many collisions', $confidence, null
-            );
-        }
-
-        // Persist to database (stored_filename relative to storage root)
-        $relPath = 'uploads/'.$storedName;
-        $dbId    = null;
+        $ext = strtolower(pathinfo($document->original_name, PATHINFO_EXTENSION));
 
         try {
-            $doc = Document::create([
-                'id'                  => $fileId,
-                'original_name'       => $originalName,
-                'stored_filename'     => $relPath,
-                'applicant_name'      => $name,
-                'applicant_lastname'  => $lastname,
+            $text   = $this->ocr->extractText($pendingPath, $ext);
+            $result = $this->classifier->classify($text);
+
+            $this->persistExtractedText($document->id, $text);
+
+            $category   = $result['category'];
+            $confidence = (float) $result['confidence'];
+            $status     = $this->classifier->determineStatus($confidence);
+
+            if ($category === 'Unclassified') {
+                @unlink($pendingPath);
+
+                $document->update([
+                    'processing_path'     => null,
+                    'processing_state'    => 'unclassified',
+                    'processing_error'    => null,
+                    'stored_filename'     => null,
+                    'category_predicted'  => 'Unclassified',
+                    'category_confidence' => 0.0,
+                    'updated_at'          => now(),
+                ]);
+
+                return;
+            }
+
+            [$storedName, $destination] = $this->allocateStoredFilename(
+                $document->id,
+                $document->applicant_name,
+                $document->applicant_lastname,
+                $category,
+                $ext
+            );
+
+            if (! $this->moveProcessedFile($pendingPath, $destination)) {
+                $this->markProcessingFailure($document, 'failed to move processed file to final storage');
+                return;
+            }
+
+            $document->update([
+                'stored_filename'     => 'uploads/'.$storedName,
+                'processing_path'     => null,
+                'processing_state'    => null,
+                'processing_error'    => null,
                 'category_predicted'  => $category,
                 'category_confidence' => $confidence,
                 'status'              => $status,
-                'size_bytes'          => $size,
+                'updated_at'          => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Queued document processing failed: '.$e->getMessage(), [
+                'document_id' => $documentId,
             ]);
 
-            if ($text !== '') {
-                DocumentText::create([
-                    'document_id'  => $doc->id,
-                    'text_excerpt' => mb_substr($text, 0, 5000),
-                    'created_at'   => now(),
-                ]);
-            }
-
-            $dbId = $doc->id;
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('Failed to persist document: '.$e->getMessage());
-            // Don't fail the upload, file is already saved
+            $this->markProcessingFailure($document, $e->getMessage());
         }
-
-        return $this->buildClientPayload(
-            $fileId, $originalName, $category, $storedName, $size, $modified, 'saved', $confidence, $dbId
-        );
     }
 
     // -------------------------------------------------------------------------
@@ -137,8 +158,7 @@ class DocumentService
     // -------------------------------------------------------------------------
 
     /**
-     * List files in the upload directory matching name+lastname (required for privacy).
-     * Mirrors _list_files_sync() from Python.
+     * List files matching applicant ownership using database-backed lookups.
      */
     public function listFiles(?string $category, ?string $name, ?string $lastname): array
     {
@@ -146,41 +166,27 @@ class DocumentService
             return [];
         }
 
-        if (! is_dir($this->uploadDir)) {
-            return [];
+        $query = $this->baseApplicantQuery($name, $lastname)
+            ->orderByDesc('created_at');
+
+        if ($category) {
+            $query->where(function ($builder) use ($category) {
+                $builder->where('category_final', $category)
+                    ->orWhere(function ($inner) use ($category) {
+                        $inner->whereNull('category_final')
+                            ->where('category_predicted', $category);
+                    });
+            });
         }
 
-        $safeName     = $this->sanitizeName($name);
-        $safeLastname = $this->sanitizeName($lastname);
-        $expected     = strtolower("{$safeName}_{$safeLastname}");
-
-        $results = [];
-        foreach (new \DirectoryIterator($this->uploadDir) as $f) {
-            if (! $f->isFile()) {
-                continue;
-            }
-            $meta = $this->parseStoredFilename($f->getFilename());
-            if (! $meta) {
-                continue;
-            }
-            if (strtolower($meta['name']) !== $expected) {
-                continue;
-            }
-            if ($category && $meta['category'] !== $category) {
-                continue;
-            }
-            $results[] = $this->buildClientPayload(
-                $meta['id'], $meta['original'], $meta['category'],
-                $f->getFilename(), $f->getSize(), $f->getMTime(), 'saved', 0.0, null
-            );
-        }
-
-        return $results;
+        return $query
+            ->get()
+            ->map(fn (Document $document) => $this->payloadFromDocument($document))
+            ->all();
     }
 
     /**
      * Find a file by UUID id and validate name/lastname ownership.
-     * Returns ['path' => string, 'filename' => string] or null.
      */
     public function findFile(string $fileId, ?string $name, ?string $lastname): ?array
     {
@@ -188,29 +194,21 @@ class DocumentService
             return null;
         }
 
-        if (! is_dir($this->uploadDir)) {
+        $document = $this->findApplicantDocument($fileId, $name, $lastname);
+        if (! $document || ! $document->stored_filename) {
             return null;
         }
 
-        $safeName     = $this->sanitizeName($name);
-        $safeLastname = $this->sanitizeName($lastname);
-        $expected     = strtolower("{$safeName}_{$safeLastname}");
-
-        foreach (new \DirectoryIterator($this->uploadDir) as $f) {
-            if (! $f->isFile()) {
-                continue;
-            }
-            $meta = $this->parseStoredFilename($f->getFilename());
-            if (! $meta || $meta['id'] !== $fileId) {
-                continue;
-            }
-            if (strtolower($meta['name']) !== $expected) {
-                return null; // file exists but doesn't belong to this user — deny
-            }
-            return ['path' => $f->getPathname(), 'filename' => $f->getFilename()];
+        $path = $this->absoluteStoragePath($document->stored_filename);
+        if (! is_file($path)) {
+            return null;
         }
 
-        return null;
+        return [
+            'path' => $path,
+            'filename' => basename($document->stored_filename),
+            'document' => $document,
+        ];
     }
 
     /**
@@ -218,60 +216,64 @@ class DocumentService
      */
     public function deleteFile(string $fileId, ?string $name, ?string $lastname): ?array
     {
-        $found = $this->findFile($fileId, $name, $lastname);
-        if (! $found) {
+        $document = $this->findApplicantDocument($fileId, $name, $lastname);
+        if (! $document) {
             return null;
         }
 
-        $meta = $this->parseStoredFilename($found['filename']);
-        $stat = stat($found['path']);
+        $storedPath = $document->stored_filename
+            ? $this->absoluteStoragePath($document->stored_filename)
+            : null;
+        $pendingPath = $document->processing_path
+            ? $this->absoluteStoragePath($document->processing_path)
+            : null;
 
-        @unlink($found['path']);
+        $stat = $storedPath && is_file($storedPath) ? stat($storedPath) : null;
+
+        if ($storedPath && is_file($storedPath)) {
+            @unlink($storedPath);
+        }
+
+        if ($pendingPath && is_file($pendingPath)) {
+            @unlink($pendingPath);
+        }
+
+        $payload = $this->payloadFromDocument($document);
+        $document->delete();
 
         return [
             'status'        => 'deleted',
-            'filename'      => $found['filename'],
-            'id'            => $meta['id'] ?? $fileId,
-            'original_name' => $meta['original'] ?? null,
-            'category'      => $meta['category'] ?? null,
+            'filename'      => $payload['filename'],
+            'id'            => $document->id,
+            'original_name' => $document->original_name,
+            'category'      => $document->effectiveCategory(),
             'size'          => $stat ? $stat['size'] : null,
             'modified'      => $stat ? $stat['mtime'] : null,
         ];
     }
 
     /**
-     * Build a ZIP archive of all matching files in memory.
-     * Returns ['data' => string, 'filename' => string] or null.
+     * Build a ZIP archive for all matching files and return a temp path.
      */
-    public function buildZip(string $name, string $lastname, ?string $category): ?array
+    public function buildZipArchive(string $name, string $lastname, ?string $category): ?array
     {
-        if (! is_dir($this->uploadDir)) {
-            return null;
+        $matching = $this->baseApplicantQuery($name, $lastname)
+            ->whereNotNull('stored_filename')
+            ->whereNull('processing_state');
+
+        if ($category) {
+            $matching->where(function ($builder) use ($category) {
+                $builder->where('category_final', $category)
+                    ->orWhere(function ($inner) use ($category) {
+                        $inner->whereNull('category_final')
+                            ->where('category_predicted', $category);
+                    });
+            });
         }
 
-        $safeName     = $this->sanitizeName($name);
-        $safeLastname = $this->sanitizeName($lastname);
-        $expected     = strtolower("{$safeName}_{$safeLastname}");
+        $documents = $matching->get();
 
-        $matching = [];
-        foreach (new \DirectoryIterator($this->uploadDir) as $f) {
-            if (! $f->isFile()) {
-                continue;
-            }
-            $meta = $this->parseStoredFilename($f->getFilename());
-            if (! $meta) {
-                continue;
-            }
-            if (strtolower($meta['name']) !== $expected) {
-                continue;
-            }
-            if ($category && $meta['category'] !== $category) {
-                continue;
-            }
-            $matching[] = $f->getPathname();
-        }
-
-        if (empty($matching)) {
+        if ($documents->isEmpty()) {
             return null;
         }
 
@@ -280,16 +282,21 @@ class DocumentService
         if ($zip->open($tmpZip, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
             return null;
         }
-        foreach ($matching as $path) {
-            $zip->addFile($path, basename($path));
+
+        foreach ($documents as $document) {
+            $path = $this->absoluteStoragePath((string) $document->stored_filename);
+            if (is_file($path)) {
+                $zip->addFile($path, basename((string) $document->stored_filename));
+            }
         }
+
         $zip->close();
 
-        $data    = file_get_contents($tmpZip);
-        @unlink($tmpZip);
+        $safeName     = $this->sanitizeName($name);
+        $safeLastname = $this->sanitizeName($lastname);
 
         return [
-            'data'     => $data,
+            'path'     => $tmpZip,
             'filename' => "{$safeName}_{$safeLastname}_documents.zip",
         ];
     }
@@ -384,11 +391,113 @@ class DocumentService
         return $safe !== '' ? $safe : 'anon';
     }
 
+    public function normalizeApplicantLookup(string $value): string
+    {
+        $normalized = mb_strtolower(trim($value));
+        $normalized = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $normalized) ?? '';
+
+        return trim($normalized);
+    }
+
+    private function persistExtractedText(string $documentId, string $text): void
+    {
+        DocumentText::updateOrCreate(
+            ['document_id' => $documentId],
+            [
+                'text_excerpt' => $text !== '' ? mb_substr($text, 0, 5000) : null,
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    private function allocateStoredFilename(
+        string $fileId,
+        string $name,
+        string $lastname,
+        string $category,
+        string $ext
+    ): array {
+        $safeName     = $this->sanitizeName($name);
+        $safeLastname = $this->sanitizeName($lastname);
+
+        $this->ensureDirectory($this->uploadDir);
+
+        for ($idx = 1; $idx <= 100; $idx++) {
+            $candidate = "{$safeName}_{$safeLastname}_{$category}_{$idx}_{$fileId}";
+            if ($ext !== '') {
+                $candidate .= '.'.$ext;
+            }
+
+            $destination = $this->uploadDir.'/'.$candidate;
+            if (! file_exists($destination)) {
+                return [$candidate, $destination];
+            }
+        }
+
+        throw new \RuntimeException('too many filename collisions');
+    }
+
+    private function baseApplicantQuery(string $name, string $lastname)
+    {
+        return Document::query()
+            ->where('applicant_name_normalized', $this->normalizeApplicantLookup($name))
+            ->where('applicant_lastname_normalized', $this->normalizeApplicantLookup($lastname));
+    }
+
+    private function findApplicantDocument(string $fileId, string $name, string $lastname): ?Document
+    {
+        /** @var Document|null $document */
+        $document = $this->baseApplicantQuery($name, $lastname)
+            ->where('id', $fileId)
+            ->first();
+
+        return $document;
+    }
+
+    private function payloadFromDocument(Document $document): array
+    {
+        return $this->buildClientPayload(
+            $document->id,
+            $document->original_name,
+            $document->effectiveCategory(),
+            $document->stored_filename ? basename($document->stored_filename) : '',
+            (int) ($document->size_bytes ?? 0),
+            $document->updated_at?->timestamp ?? $document->created_at?->timestamp ?? time(),
+            $document->effectiveStatus(),
+            (float) $document->category_confidence,
+            $document->id,
+            $document->processing_error,
+        );
+    }
+
+    private function markProcessingFailure(Document $document, string $error): void
+    {
+        $document->update([
+            'processing_state' => 'failed',
+            'processing_error' => Str::limit($error, 1000, ''),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function absoluteStoragePath(string $relativePath): string
+    {
+        return storage_path('app/'.$relativePath);
+    }
+
+    private function ensureDirectory(string $path): void
+    {
+        if (! is_dir($path)) {
+            mkdir($path, 0755, true);
+        }
+    }
+
     private function moveProcessedFile(string $source, string $destination): bool
     {
         if (! is_file($source)) {
             return false;
         }
+
+        $this->ensureDirectory(dirname($destination));
 
         if (@rename($source, $destination)) {
             return true;
@@ -412,7 +521,8 @@ class DocumentService
         int $modified,
         string $status,
         float $confidence,
-        ?string $dbId
+        ?string $dbId,
+        ?string $error = null
     ): array {
         return [
             'id'           => $id,
@@ -425,6 +535,7 @@ class DocumentService
             'status'       => $status,
             'confidence'   => $confidence,
             'dbId'         => $dbId,
+            'error'        => $error,
             'uid'          => $id,
         ];
     }

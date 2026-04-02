@@ -1,0 +1,12 @@
+{
+  "documents": [
+    {
+      "path": "tests/Fixtures/validation/private/id-card-sample.pdf",
+      "expected_category": "Udostoverenie"
+    },
+    {
+      "path": "tests/Fixtures/validation/private/ent-certificate-sample.pdf",
+      "expected_category": "ENT"
+    }
+  ]
+}

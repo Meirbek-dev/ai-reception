@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class FileController extends Controller
@@ -44,9 +45,8 @@ class FileController extends Controller
         $lastname = $request->input('lastname');
         $files    = $request->file('files');
 
-        $successful   = [];
-        $unclassified = [];
-        $failed       = [];
+        $accepted = [];
+        $failed   = [];
 
         foreach ($files as $file) {
             if (! $file->isValid()) {
@@ -54,18 +54,15 @@ class FileController extends Controller
                 continue;
             }
 
-            $tmpPath = $file->getRealPath();
             $origName = $file->getClientOriginalName();
 
             try {
-                $result = $this->documentService->processFile($tmpPath, $origName, $name, $lastname);
+                $result = $this->documentService->queueFile($file, $name, $lastname);
 
                 if (str_starts_with((string) $result['status'], 'error')) {
                     $failed[] = ['filename' => $origName, 'error' => $result['status']];
-                } elseif ($result['status'] === 'unclassified') {
-                    $unclassified[] = $result;
                 } else {
-                    $successful[] = $result;
+                    $accepted[] = $result;
                 }
             } catch (\Throwable $e) {
                 Log::error("Upload processing failed for {$origName}: ".$e->getMessage());
@@ -74,13 +71,14 @@ class FileController extends Controller
         }
 
         return response()->json([
-            'success'      => $successful,
-            'unclassified' => $unclassified,
-            'failed'       => $failed,
-            'summary'      => [
+            'accepted' => $accepted,
+            'success'  => $accepted,
+            'failed'   => $failed,
+            'summary'  => [
                 'total'        => count($files),
-                'successful'   => count($successful),
-                'unclassified' => count($unclassified),
+                'accepted'     => count($accepted),
+                'successful'   => count($accepted),
+                'unclassified' => 0,
                 'failed'       => count($failed),
             ],
         ]);
@@ -105,7 +103,7 @@ class FileController extends Controller
     // GET /api/files/{id}
     // -------------------------------------------------------------------------
 
-    public function show(Request $request, string $id): Response|StreamedResponse
+    public function show(Request $request, string $id): JsonResponse|BinaryFileResponse|StreamedResponse
     {
         $name     = $request->query('name');
         $lastname = $request->query('lastname');
@@ -136,7 +134,7 @@ class FileController extends Controller
     // GET /api/download_zip
     // -------------------------------------------------------------------------
 
-    public function downloadZip(Request $request): Response|StreamedResponse
+    public function downloadZip(Request $request): JsonResponse|Response|BinaryFileResponse|StreamedResponse
     {
         $request->validate([
             'name'     => 'required|string|min:1|max:100',
@@ -147,7 +145,7 @@ class FileController extends Controller
         $lastname = $request->query('lastname');
         $category = $request->query('category');
 
-        $zip = $this->documentService->buildZip($name, $lastname, $category);
+        $zip = $this->documentService->buildZipArchive($name, $lastname, $category);
 
         if (! $zip) {
             return response()->json(['message' => 'No matching files found'], 404);
@@ -157,10 +155,21 @@ class FileController extends Controller
         $encodedName   = rawurlencode($zip['filename']);
         $contentDisp   = "attachment; filename=\"{$asciiFilename}\"; filename*=UTF-8''{$encodedName}";
 
-        return response($zip['data'], 200, [
+        return response()->streamDownload(function () use ($zip) {
+            $handle = fopen($zip['path'], 'rb');
+            if ($handle === false) {
+                return;
+            }
+
+            while (! feof($handle)) {
+                echo fread($handle, 8192);
+            }
+
+            fclose($handle);
+            @unlink($zip['path']);
+        }, $zip['filename'], [
             'Content-Type'        => 'application/zip',
             'Content-Disposition' => $contentDisp,
-            'Content-Length'      => strlen($zip['data']),
         ]);
     }
 

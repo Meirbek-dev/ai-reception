@@ -1,9 +1,11 @@
 <?php
 
 use App\Models\Document;
+use App\Models\DocumentText;
 use App\Models\ReviewAction;
 use App\Models\User;
 use App\Services\ClassifierService;
+use App\Services\DocumentService;
 use App\Services\OcrService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -35,6 +37,7 @@ beforeEach(function () {
     $this->testStoragePath = base_path('tests/tmp/storage-'.uniqid('', true));
     File::ensureDirectoryExists($this->testStoragePath);
     app()->useStoragePath($this->testStoragePath);
+    config(['queue.default' => 'database']);
 });
 
 afterEach(function () {
@@ -65,18 +68,25 @@ it('supports uploading a document and completing the review workflow', function 
     $uploadResponse
         ->assertOk()
         ->assertJsonPath('summary.total', 1)
-        ->assertJsonPath('summary.successful', 1)
+        ->assertJsonPath('summary.accepted', 1)
         ->assertJsonPath('summary.failed', 0)
         ->assertJsonPath('success.0.originalName', 'ent-certificate.pdf')
-        ->assertJsonPath('success.0.category', 'ENT')
-        ->assertJsonPath('success.0.status', 'saved');
+        ->assertJsonPath('success.0.status', 'processing');
 
     $document = Document::query()->sole();
 
     expect($document->original_name)->toBe('ent-certificate.pdf');
+    expect($document->processing_state)->toBe('processing');
+    expect($document->stored_filename)->toBeNull();
+
+    app(DocumentService::class)->processQueuedDocument($document->id);
+
+    $document = $document->fresh();
+
     expect($document->status)->toBe('queued');
+    expect($document->processing_state)->toBeNull();
     expect($document->category_predicted)->toBe('ENT');
-    expect($document->text?->text_excerpt)->toContain('тестирования');
+    expect(DocumentText::query()->where('document_id', $document->id)->sole()->text_excerpt)->toContain('тестирования');
 
     $storedPath = $this->testStoragePath.'/app/'.$document->stored_filename;
     expect($document->stored_filename)->not->toBeNull();
@@ -86,7 +96,7 @@ it('supports uploading a document and completing the review workflow', function 
         ->assertOk()
         ->assertJsonCount(1)
         ->assertJsonPath('0.id', $document->id)
-        ->assertJsonPath('0.originalName', 'Aruzhan_Saparova')
+        ->assertJsonPath('0.originalName', 'ent-certificate.pdf')
         ->assertJsonPath('0.category', 'ENT');
 
     $reviewer = User::create([
@@ -99,11 +109,11 @@ it('supports uploading a document and completing the review workflow', function 
 
     Sanctum::actingAs($reviewer);
 
-    $this->getJson('/admin/review-queue')
+    $this->getJson('/admin/review-queue?status=queued')
         ->assertOk()
-        ->assertJsonCount(1)
-        ->assertJsonPath('0.id', $document->id)
-        ->assertJsonPath('0.status', 'queued');
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $document->id)
+        ->assertJsonPath('data.0.status', 'queued');
 
     $this->postJson("/admin/review-queue/{$document->id}/claim")
         ->assertOk()
@@ -162,14 +172,17 @@ it('marks high-confidence uploads as uploaded and keeps them out of the review q
     $uploadResponse
         ->assertOk()
         ->assertJsonPath('summary.total', 1)
-        ->assertJsonPath('summary.successful', 1)
+        ->assertJsonPath('summary.accepted', 1)
         ->assertJsonPath('summary.failed', 0)
         ->assertJsonPath('summary.unclassified', 0)
         ->assertJsonPath('success.0.originalName', 'id-card.pdf')
-        ->assertJsonPath('success.0.category', 'Udostoverenie')
-        ->assertJsonPath('success.0.status', 'saved');
+        ->assertJsonPath('success.0.status', 'processing');
 
     $document = Document::query()->sole();
+
+    app(DocumentService::class)->processQueuedDocument($document->id);
+
+    $document = $document->fresh();
 
     expect($document->original_name)->toBe('id-card.pdf');
     expect($document->status)->toBe('uploaded');
@@ -198,15 +211,15 @@ it('marks high-confidence uploads as uploaded and keeps them out of the review q
 
     Sanctum::actingAs($reviewer);
 
-    $this->getJson('/admin/review-queue')
+    $this->getJson('/admin/review-queue?status=queued')
         ->assertOk()
-        ->assertJsonCount(0);
+        ->assertJsonCount(0, 'data');
 
     $this->getJson('/admin/review-queue?status=uploaded')
         ->assertOk()
-        ->assertJsonCount(1)
-        ->assertJsonPath('0.id', $document->id)
-        ->assertJsonPath('0.status', 'uploaded');
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $document->id)
+        ->assertJsonPath('data.0.status', 'uploaded');
 
     expect(ReviewAction::query()->where('document_id', $document->id)->count())->toBe(0);
 });

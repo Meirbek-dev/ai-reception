@@ -9,16 +9,30 @@ export interface Document {
   id: string;
   original_name: string;
   stored_filename: string;
+  processing_path: string | null;
+  processing_error: string | null;
   applicant_name: string;
   applicant_lastname: string;
   category_predicted: string;
   category_confidence: number;
   category_final: string | null;
-  status: "uploaded" | "queued" | "in_review" | "resolved";
+  status:
+    | "processing"
+    | "uploaded"
+    | "queued"
+    | "in_review"
+    | "resolved"
+    | "unclassified"
+    | "failed";
   assigned_reviewer_id: string | null;
   uploaded_at: string;
   updated_at: string;
   text_excerpt: string | null;
+}
+
+interface ReviewQueueResponse {
+  data: Document[];
+  next_cursor: string | null;
 }
 
 export interface ReviewAction {
@@ -42,10 +56,9 @@ export interface ResolveRequest {
 
 export interface DocumentPreview {
   type: "image" | "text" | "none" | "pdf";
-  image?: string; // base64 data URL
   text?: string;
   message?: string;
-  url?: string; // URL for PDF files
+  url?: string;
 }
 
 /**
@@ -54,28 +67,37 @@ export interface DocumentPreview {
 export async function getReviewQueue(params?: {
   status?: string;
   limit?: number;
-  offset?: number;
 }): Promise<Document[]> {
-  const searchParams = new URLSearchParams();
-  if (params?.status) searchParams.set("status", params.status);
-  if (params?.limit) searchParams.set("limit", params.limit.toString());
-  if (params?.offset) searchParams.set("offset", params.offset.toString());
+  const limit = params?.limit ?? 100;
+  const documents: Document[] = [];
+  let cursor: string | null = null;
 
-  const url = `${getBackendOrigin()}/admin/review-queue${
-    searchParams.toString() ? `?${searchParams.toString()}` : ""
-  }`;
+  do {
+    const searchParams = new URLSearchParams();
+    if (params?.status) searchParams.set("status", params.status);
+    searchParams.set("limit", limit.toString());
+    if (cursor) searchParams.set("cursor", cursor);
 
-  const response = await fetch(url, {
-    method: "GET",
-    credentials: "include",
-  });
+    const url = `${getBackendOrigin()}/admin/review-queue${
+      searchParams.toString() ? `?${searchParams.toString()}` : ""
+    }`;
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Не удалось получить очередь на проверку");
-  }
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+    });
 
-  return response.json();
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.message || error.detail || "Не удалось получить очередь на проверку");
+    }
+
+    const payload = (await response.json()) as ReviewQueueResponse;
+    documents.push(...payload.data);
+    cursor = payload.next_cursor;
+  } while (cursor);
+
+  return documents;
 }
 
 /**
@@ -91,8 +113,8 @@ export async function claimDocument(documentId: string): Promise<Document> {
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Не удалось принять документ");
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || error.detail || "Не удалось принять документ");
   }
 
   return response.json();
@@ -111,8 +133,8 @@ export async function releaseDocument(documentId: string): Promise<Document> {
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Не удалось вернуть документ в очередь");
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || error.detail || "Не удалось вернуть документ в очередь");
   }
 
   return response.json();
@@ -138,8 +160,8 @@ export async function resolveDocument(
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Не удалось завершить проверку документа");
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || error.detail || "Не удалось завершить проверку документа");
   }
 
   return response.json();
@@ -150,7 +172,7 @@ export async function resolveDocument(
  */
 export async function getDocument(documentId: string): Promise<Document> {
   const response = await fetch(
-    `${getBackendOrigin()}/admin/documents/${documentId}`,
+    `${getBackendOrigin()}/admin/review-queue/${documentId}`,
     {
       method: "GET",
       credentials: "include",
@@ -158,8 +180,8 @@ export async function getDocument(documentId: string): Promise<Document> {
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Не удалось получить документ");
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || error.detail || "Не удалось получить документ");
   }
 
   return response.json();
@@ -172,7 +194,7 @@ export async function getDocumentPreview(
   documentId: string,
 ): Promise<DocumentPreview> {
   const response = await fetch(
-    `${getBackendOrigin()}/admin/documents/${documentId}/preview`,
+    `${getBackendOrigin()}/admin/review-queue/${documentId}/preview`,
     {
       method: "GET",
       credentials: "include",
@@ -180,23 +202,27 @@ export async function getDocumentPreview(
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Не удалось получить предпросмотр");
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || error.detail || "Не удалось получить предпросмотр");
   }
 
-  // Check if response is PDF
   const contentType = response.headers.get("Content-Type");
   if (contentType?.includes("application/pdf")) {
-    // For PDFs, create a blob URL
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
     return {
       type: "pdf",
-      url,
+      url: URL.createObjectURL(blob),
     };
   }
 
-  // Otherwise, parse as JSON (image/text/none)
+  if (contentType?.startsWith("image/")) {
+    const blob = await response.blob();
+    return {
+      type: "image",
+      url: URL.createObjectURL(blob),
+    };
+  }
+
   return response.json();
 }
 
@@ -207,7 +233,7 @@ export async function getDocumentAudit(
   documentId: string,
 ): Promise<ReviewAction[]> {
   const response = await fetch(
-    `${getBackendOrigin()}/admin/documents/${documentId}/audit`,
+    `${getBackendOrigin()}/admin/review-queue/${documentId}/audit`,
     {
       method: "GET",
       credentials: "include",
@@ -215,8 +241,8 @@ export async function getDocumentAudit(
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Не удалось получить журнал действий");
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || error.detail || "Не удалось получить журнал действий");
   }
 
   return response.json();

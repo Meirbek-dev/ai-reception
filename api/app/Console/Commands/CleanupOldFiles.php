@@ -30,7 +30,7 @@ class CleanupOldFiles extends Command
             return 0;
         }
 
-        foreach (new \DirectoryIterator($dir) as $f) {
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)) as $f) {
             if (! $f->isFile()) {
                 continue;
             }
@@ -38,6 +38,20 @@ class CleanupOldFiles extends Command
                 @unlink($f->getPathname());
                 $removed++;
                 $this->line("Removed old upload: {$f->getFilename()}");
+            }
+        }
+
+        $directories = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST,
+        );
+
+        foreach ($directories as $entry) {
+            if ($entry->isDir()) {
+                $iterator = new \FilesystemIterator($entry->getPathname());
+                if (! $iterator->valid()) {
+                    @rmdir($entry->getPathname());
+                }
             }
         }
 

@@ -169,7 +169,7 @@ function ReviewQueuePage() {
 
     // Cleanup blob URL on unmount or when document changes
     return () => {
-      if (preview?.type === "pdf" && preview.url) {
+      if (preview?.url) {
         URL.revokeObjectURL(preview.url);
       }
     };
@@ -773,14 +773,15 @@ function ReviewQueuePage() {
                         <FileText className="h-4 w-4" />
                         Предпросмотр документа
                       </h3>
-                      {preview?.image && (
+                      {preview?.url &&
+                        (preview.type === "image" || preview.type === "pdf") && (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            if (preview?.image) {
+                            if (preview?.url) {
                               const link = document.createElement("a");
-                              link.href = preview.image;
+                              link.href = preview.url;
                               link.download = selectedDoc.original_name;
                               link.click();
                             }
@@ -807,10 +808,10 @@ function ReviewQueuePage() {
                           style={{ border: "none" }}
                         />
                       </div>
-                    ) : preview?.type === "image" && preview.image ? (
+                    ) : preview?.type === "image" && preview.url ? (
                       <div className="border-2 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow">
                         <img
-                          src={preview.image}
+                          src={preview.url}
                           alt="Предпросмотр документа"
                           className="w-full max-h-96 object-contain bg-muted/50"
                         />

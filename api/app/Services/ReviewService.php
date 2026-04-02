@@ -15,21 +15,47 @@ class ReviewService
      *
      * Mirrors get_review_queue() from Python.
      */
-    public function getQueue(?string $status, int $limit, int $offset): \Illuminate\Database\Eloquent\Collection
+    public function getQueue(?string $status, int $limit, ?string $cursor): array
     {
-        $query = Document::with(['text', 'reviewer']);
+        $query = Document::with(['text', 'reviewer'])
+            ->whereNull('processing_state');
 
-        if ($status === null) {
-            $query->where('status', 'queued');
-        } else {
+        if ($status !== null) {
             $query->where('status', $status);
         }
 
-        return $query
+        $cursorData = $this->decodeCursor($cursor);
+        if ($cursorData !== null) {
+            $query->where(function ($builder) use ($cursorData) {
+                $builder->where('created_at', '>', $cursorData['created_at'])
+                    ->orWhere(function ($inner) use ($cursorData) {
+                        $inner->where('created_at', '=', $cursorData['created_at'])
+                            ->where('id', '>', $cursorData['id']);
+                    });
+            });
+        }
+
+        $documents = $query
             ->orderBy('created_at', 'asc')
-            ->limit($limit)
-            ->offset($offset)
+            ->orderBy('id', 'asc')
+            ->limit($limit + 1)
             ->get();
+
+        $nextCursor = null;
+        if ($documents->count() > $limit) {
+            $last = $documents->pop();
+            if ($last) {
+                $nextCursor = $this->encodeCursor(
+                    (string) $last->created_at,
+                    (string) $last->id,
+                );
+            }
+        }
+
+        return [
+            'documents' => $documents,
+            'next_cursor' => $nextCursor,
+        ];
     }
 
     /**
@@ -169,16 +195,9 @@ class ReviewService
                 );
             }
 
-            // Calculate duration from last claim action
-            $claimAction = ReviewAction::where('document_id', $documentId)
-                ->where('reviewer_id', $reviewer->id)
-                ->where('action', 'claim')
-                ->orderByDesc('created_at')
-                ->first();
-
             $durationSeconds = null;
-            if ($claimAction && $claimAction->created_at) {
-                $durationSeconds = (int) now()->diffInSeconds($claimAction->created_at);
+            if ($document->review_started_at) {
+                $durationSeconds = (int) $document->review_started_at->diffInSeconds(now());
             }
 
             // Determine action type
@@ -195,9 +214,11 @@ class ReviewService
             ];
             if ($applicantName !== null) {
                 $updates['applicant_name'] = $applicantName;
+                $updates['applicant_name_normalized'] = $this->normalizeApplicantLookup($applicantName);
             }
             if ($applicantLastname !== null) {
                 $updates['applicant_lastname'] = $applicantLastname;
+                $updates['applicant_lastname_normalized'] = $this->normalizeApplicantLookup($applicantLastname);
             }
             $document->update($updates);
 
@@ -240,5 +261,48 @@ class ReviewService
     public function findDocument(string $documentId): ?Document
     {
         return Document::with(['text', 'reviewer'])->find($documentId);
+    }
+
+    private function encodeCursor(string $createdAt, string $id): string
+    {
+        return rtrim(strtr(base64_encode(json_encode([
+            'created_at' => $createdAt,
+            'id' => $id,
+        ], JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+    }
+
+    private function decodeCursor(?string $cursor): ?array
+    {
+        if (! $cursor) {
+            return null;
+        }
+
+        $decoded = base64_decode(strtr($cursor, '-_', '+/'), true);
+        if ($decoded === false) {
+            return null;
+        }
+
+        try {
+            $payload = json_decode($decoded, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return null;
+        }
+
+        if (! isset($payload['created_at'], $payload['id'])) {
+            return null;
+        }
+
+        return [
+            'created_at' => $payload['created_at'],
+            'id' => $payload['id'],
+        ];
+    }
+
+    private function normalizeApplicantLookup(string $value): string
+    {
+        $normalized = mb_strtolower(trim($value));
+        $normalized = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $normalized) ?? '';
+
+        return trim($normalized);
     }
 }

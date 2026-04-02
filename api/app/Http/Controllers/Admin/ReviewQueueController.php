@@ -9,6 +9,7 @@ use App\Services\ReviewService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ReviewQueueController extends Controller
 {
@@ -22,7 +23,7 @@ class ReviewQueueController extends Controller
     {
         $status = $request->query('status');
         $limit  = min((int) $request->query('limit', 50), 100);
-        $offset = max((int) $request->query('offset', 0), 0);
+        $cursor = $request->query('cursor');
 
         // Validate status enum
         $validStatuses = ['uploaded', 'queued', 'in_review', 'resolved'];
@@ -30,9 +31,12 @@ class ReviewQueueController extends Controller
             return response()->json(['message' => 'Invalid status value'], 422);
         }
 
-        $documents = $this->reviewService->getQueue($status, $limit, $offset);
+        $result = $this->reviewService->getQueue($status, $limit, $cursor);
 
-        return response()->json(DocumentResource::collection($documents));
+        return response()->json([
+            'data' => DocumentResource::collection($result['documents']),
+            'next_cursor' => $result['next_cursor'],
+        ]);
     }
 
     // -------------------------------------------------------------------------
@@ -123,7 +127,7 @@ class ReviewQueueController extends Controller
     // GET /api/admin/review-queue/{document}/preview
     // -------------------------------------------------------------------------
 
-    public function preview(string $document): JsonResponse|Response
+    public function preview(string $document): JsonResponse|Response|BinaryFileResponse
     {
         $doc = $this->reviewService->findDocument($document);
         if (! $doc) {
@@ -152,14 +156,15 @@ class ReviewQueueController extends Controller
             ]);
         }
 
-        // For images return base64-encoded data URI
+        // For images stream the actual image file inline.
         if (in_array($ext, ['jpg', 'jpeg', 'png'], true)) {
-            $bytes    = file_get_contents($filePath);
-            $b64      = base64_encode($bytes);
             $mimeType = in_array($ext, ['jpg', 'jpeg'], true) ? 'image/jpeg' : 'image/png';
-            return response()->json([
-                'type'  => 'image',
-                'image' => "data:{$mimeType};base64,{$b64}",
+            $encodedName = rawurlencode($doc->original_name);
+
+            return response()->file($filePath, [
+                'Content-Type'        => $mimeType,
+                'Content-Disposition' => "inline; filename*=UTF-8''{$encodedName}",
+                'Cache-Control'       => 'private, max-age=3600',
             ]);
         }
 

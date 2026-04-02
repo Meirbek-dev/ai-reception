@@ -26,6 +26,8 @@ class ClassifierService
         ],
     ];
 
+    private ?array $normalizedCategories = null;
+
     /**
      * Classify text, returning ['category' => string, 'confidence' => float, 'fuzzy_score' => float|null].
      *
@@ -38,11 +40,12 @@ class ClassifierService
         }
 
         $lower = mb_strtolower($text);
+        $textTokens = $this->tokenize($lower);
 
         // --- Fast exact containment check ---
-        foreach (self::CATEGORIES as $category => $keywords) {
+        foreach ($this->normalizedCategories() as $category => $keywords) {
             foreach ($keywords as $keyword) {
-                if ($keyword !== '' && mb_strpos($lower, mb_strtolower($keyword)) !== false) {
+                if ($keyword['value'] !== '' && mb_strpos($lower, $keyword['value']) !== false) {
                     $confidence = $this->computeConfidence($category, $text, null);
                     return ['category' => $category, 'confidence' => $confidence, 'fuzzy_score' => null];
                 }
@@ -53,12 +56,12 @@ class ClassifierService
         $bestCategory = 'Unclassified';
         $bestScore    = 0.0;
 
-        foreach (self::CATEGORIES as $category => $keywords) {
+        foreach ($this->normalizedCategories() as $category => $keywords) {
             foreach ($keywords as $keyword) {
-                if ($keyword === '') {
+                if ($keyword['value'] === '') {
                     continue;
                 }
-                $score = $this->tokenSetRatio(mb_strtolower($keyword), $lower);
+                $score = $this->tokenSetRatioFromTokens($keyword['tokens'], $textTokens);
                 if ($score > $bestScore) {
                     $bestScore    = $score;
                     $bestCategory = $category;
@@ -123,13 +126,8 @@ class ClassifierService
      *   sorted intersection, (intersection + rest1), (intersection + rest2)
      * and returns the max similarity * 100.
      */
-    private function tokenSetRatio(string $a, string $b): float
+    private function tokenSetRatioFromTokens(array $tokensA, array $tokensB): float
     {
-        $tokensA = array_unique(preg_split('/\s+/', trim($a)));
-        $tokensB = array_unique(preg_split('/\s+/', trim($b)));
-        sort($tokensA);
-        sort($tokensB);
-
         $intersection = array_intersect($tokensA, $tokensB);
         sort($intersection);
 
@@ -147,6 +145,37 @@ class ClassifierService
         ];
 
         return max($scores) * 100;
+    }
+
+    private function normalizedCategories(): array
+    {
+        if ($this->normalizedCategories !== null) {
+            return $this->normalizedCategories;
+        }
+
+        $this->normalizedCategories = [];
+
+        foreach (self::CATEGORIES as $category => $keywords) {
+            $this->normalizedCategories[$category] = array_map(function (string $keyword) {
+                $normalized = mb_strtolower($keyword);
+
+                return [
+                    'value' => $normalized,
+                    'tokens' => $this->tokenize($normalized),
+                ];
+            }, $keywords);
+        }
+
+        return $this->normalizedCategories;
+    }
+
+    private function tokenize(string $value): array
+    {
+        $tokens = preg_split('/\s+/u', trim($value)) ?: [];
+        $tokens = array_values(array_unique(array_filter($tokens, fn (string $token) => $token !== '')));
+        sort($tokens);
+
+        return $tokens;
     }
 
     /**

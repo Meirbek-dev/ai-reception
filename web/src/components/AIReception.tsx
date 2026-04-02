@@ -574,12 +574,19 @@ export default function AIReceptionApp() {
         setFiles(merged as UploadedFile[]);
 
         const failedCount = uploadResult.failed?.length ?? 0;
+        const successCount = uploadResult.success?.length ?? 0;
+        const unclassifiedCount = uploadResult.unclassified?.length ?? 0;
         try {
-          if (merged.length > 0 && failedCount === 0) {
+          if (successCount > 0 && failedCount === 0 && unclassifiedCount === 0) {
             toast.success(strings.uploadSuccess);
-          } else if (merged.length > 0 && failedCount > 0) {
+          } else if (successCount > 0 && (failedCount > 0 || unclassifiedCount > 0)) {
+            const notOk = failedCount + unclassifiedCount;
             toast.warning(
-              `Обработано ${merged.length} из ${merged.length + failedCount} файлов. ${failedCount} не удалось обработать.`
+              `Классифицировано ${successCount} из ${successCount + notOk} файлов. ${unclassifiedCount > 0 ? `${unclassifiedCount} не удалось классифицировать. ` : ""}${failedCount > 0 ? `${failedCount} не удалось обработать.` : ""}`
+            );
+          } else if (unclassifiedCount > 0 && successCount === 0 && failedCount === 0) {
+            toast.warning(
+              `Не удалось классифицировать ${unclassifiedCount} файл(ов). Тип документов не распознан.`
             );
           } else {
             toast.error(

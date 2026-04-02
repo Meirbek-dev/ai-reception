@@ -38,8 +38,9 @@ class DocumentService
         $size     = filesize($tmpPath);
         $modified = time();
 
-        // OCR
-        $text   = $this->ocr->extractText($tmpPath);
+        // OCR — pass the original extension so OcrService can handle generic PHP
+        // temp paths (e.g. phpF6B6.tmp on Windows) that carry no useful extension.
+        $text   = $this->ocr->extractText($tmpPath, $ext);
         $result = $this->classifier->classify($text);
 
         $category   = $result['category'];

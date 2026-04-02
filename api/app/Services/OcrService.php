@@ -24,7 +24,7 @@ class OcrService
         $this->pdfDpi           = (int) config('app.pdf_dpi', 200);
         $this->imageMaxSize     = (int) config('app.image_max_size', 1800);
         $this->tesseractPsm     = (int) config('app.tesseract_psm', 4);
-        $this->tesseractTimeout = (int) config('app.tesseract_timeout', 30);
+        $this->tesseractTimeout = (int) config('app.tesseract_timeout', 60);
         $this->maxTextLength    = (int) config('app.max_text_extract_length', 5000);
         $this->cacheTtlDays     = (int) config('app.cache_ttl_days', 7);
         $this->cacheDir         = storage_path('app/cache');
@@ -37,8 +37,12 @@ class OcrService
     /**
      * Extract text from a file path.
      * Checks the SHA-256 cache first; performs OCR on a cache miss.
+     *
+     * @param string $filePath    Path to the file (may be a generic PHP temp path with no useful extension)
+     * @param string $hintExt     Original file extension hint (e.g. 'pdf', 'jpg') — used when the temp
+     *                            path extension is not a recognised image/PDF type.
      */
-    public function extractText(string $filePath): string
+    public function extractText(string $filePath, string $hintExt = ''): string
     {
         $hash   = $this->cacheKey($filePath);
         $cached = $this->readCache($hash);
@@ -48,13 +52,25 @@ class OcrService
             return $cached;
         }
 
-        $ext  = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        // Prefer the path's own extension; fall back to the caller-supplied hint.
+        // PHP uploaded temp files use .tmp on Windows, so the hint is critical.
+        $pathExt = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        $ext     = in_array($pathExt, ['pdf', 'jpg', 'jpeg', 'png'], true)
+            ? $pathExt
+            : strtolower(ltrim($hintExt, '.'));
+
         $text = match ($ext) {
             'pdf'         => $this->extractFromPdf($filePath),
             'jpg', 'jpeg',
             'png'         => $this->extractFromImage($filePath),
             default       => '',
         };
+
+        if ($text === '') {
+            Log::warning("OCR returned empty text for: {$filePath} (ext={$ext})");
+        } else {
+            Log::info("OCR extracted " . mb_strlen($text) . " chars from: {$filePath} (ext={$ext})");
+        }
 
         $this->writeCache($hash, $text);
         return $text;
@@ -118,7 +134,7 @@ class OcrService
     {
         try {
             return (new TesseractOCR($imagePath))
-                ->lang('rus', 'kaz', 'eng')
+                ->lang('rus', 'eng')
                 ->psm($this->tesseractPsm)
                 ->run();
         } catch (\Throwable $e) {
@@ -135,7 +151,10 @@ class OcrService
     {
         try {
             $manager = new ImageManager(new Driver());
-            $img     = $manager->read($filePath);
+            // Intervention Image v4 uses decodePath(); v3 used read().
+            $img = method_exists($manager, 'read')
+                ? $manager->read($filePath)
+                : $manager->decodePath($filePath);
 
             $img->greyscale();
 
@@ -145,7 +164,10 @@ class OcrService
                 $img->scaleDown($this->imageMaxSize, $this->imageMaxSize);
             }
 
-            $tmp = tempnam(sys_get_temp_dir(), 'ocr_img_').'.png';
+            // tempnam creates the placeholder file; append .png for the actual output.
+            $placeholder = tempnam(sys_get_temp_dir(), 'ocr_img_');
+            $tmp         = $placeholder . '.png';
+            @unlink($placeholder); // remove the placeholder; we'll write to $tmp
             $img->save($tmp);
             return $tmp;
         } catch (\Throwable $e) {

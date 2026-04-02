@@ -1,432 +1,243 @@
-# AI Reception — Laravel API
+# AI Reception Backend
 
-OCR-based document classification system with a human-in-the-loop review queue.
-PHP 4+ / Laravel 13 backend. Replaces the previous FastAPI (Python) implementation.
+This directory contains the Laravel 13 backend for AI Reception. It is responsible for:
 
----
+- accepting and validating applicant uploads
+- converting PDFs to images and extracting text with OCR
+- classifying documents and queueing uncertain results for manual review
+- authenticating reviewers and admins
+- serving the built frontend in production
 
-## Table of Contents
+## Important Current Behavior
 
-1. [Requirements](#requirements)
-2. [Local Development](#local-development)
-3. [Environment Variables](#environment-variables)
-4. [Creating Users](#creating-users)
-5. [API Reference](#api-reference)
-6. [Docker / Production Deployment](#docker--production-deployment)
-7. [Architecture](#architecture)
-
----
+- API routes are mounted without an `/api` prefix because `bootstrap/app.php` sets `apiPrefix: ''`
+- the main public endpoints are `/health`, `/upload`, `/files`, `/download_zip`, `/auth/*`, and `/admin/*`
+- local development uses SQLite by default at `database/database.sqlite`
+- the scheduled cleanup command runs hourly and removes expired uploads and OCR cache entries
 
 ## Requirements
 
-### Local development
+| Dependency | Required version | Notes |
+| --- | --- | --- |
+| PHP | 8.4+ | Needs `gd`, `pdo_sqlite`, `zip`, `intl` |
+| Composer | 2.x | Backend dependency management |
+| Tesseract OCR | 5.x | OCR engine used by `OcrService` |
+| poppler | recent | `pdftoppm` must be on `PATH` |
 
-| Tool | Version |
-|------|---------|
-| PHP | 8.4+ (with `gd`, `pdo_sqlite`, `zip`, `intl` extensions) |
-| Composer | 2.x |
-| Tesseract OCR | 5.x |
-| poppler-utils | any recent (`pdftoppm` must be in `PATH`) |
-
-Install system dependencies on **Debian/Ubuntu**:
+Typical package install on Ubuntu:
 
 ```bash
-sudo apt install tesseract-ocr tesseract-ocr-rus tesseract-ocr-kaz poppler-utils
+sudo apt install tesseract-ocr tesseract-ocr-rus poppler-utils
 ```
 
-On **macOS** (Homebrew):
+## Local Setup
 
-```bash
-brew install tesseract tesseract-lang poppler
-```
-
-On **Windows** (with [Laravel Herd](https://herd.laravel.com/)):
-
-- Install Tesseract via [UB Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki); add to `PATH`
-- Install poppler via winget: `winget install poppler`
-
----
-
-## Local Development
-
-### 1. Install dependencies and set up the app
+### Bootstrap the app
 
 ```bash
 cd api
-
-# Install PHP and JS dependencies, generate app key, run migrations, build frontend
 composer setup
 ```
 
-This runs: `composer install` → `key:generate` → `migrate` → `npm install` → `npm run build`.
+That script currently does the following:
 
-### 2. Start all processes (server + queue + Vite)
+- installs Composer dependencies
+- copies `.env.example` to `.env` if missing
+- generates `APP_KEY`
+- runs database migrations
+
+### Run the backend
 
 ```bash
+cd api
 composer dev
 ```
 
-This starts three concurrent processes:
+`composer dev` starts two long-running processes:
 
-| Process | What it does | Port |
-|---------|-------------|------|
-| `php artisan serve --port=5040` | Laravel dev server | 5040 |
-| `php artisan queue:listen` | Job queue worker | — |
+- PHP development server on `127.0.0.1:5040`
+- `php artisan queue:listen --tries=1`
 
-The API is at **<http://localhost:5040/api/>**
+The frontend dev server in `../web` should be run separately with `pnpm dev`.
 
-> **Note:** The React frontend in `web/` talks to `http://localhost:5040` for API calls. Make sure that port is free before running `composer dev`.
-
-### 3. Create your first admin user
+### Test the backend
 
 ```bash
-php artisan admin:create --email=admin@example.com --name="Admin" --role=admin
-```
-
-You will be prompted for a password if `--password` is not supplied.
-
-### 4. Run migrations manually (if needed)
-
-```bash
-php artisan migrate
-```
-
-### 5. Run tests
-
-```bash
+cd api
 composer test
 ```
 
----
+## Useful Commands
+
+```bash
+# Create an admin user
+php artisan admin:create --email=admin@example.com --name="Admin" --role=admin
+```
+
+```bash
+# Create a reviewer
+php artisan admin:create --email=reviewer@example.com --name="Reviewer" --role=reviewer
+```
+
+```bash
+# Run migrations manually
+php artisan migrate
+```
+
+```bash
+# Trigger cleanup manually
+php artisan app:cleanup-old-files
+```
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` (done automatically by `composer setup`) and adjust as needed.
+The defaults live in `.env.example`. The most important settings are below.
 
-### Core Laravel settings
+### Core application settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_KEY` | *(generated)* | Encryption key — never share |
-| `APP_ENV` | `local` | `local` / `production` |
-| `APP_DEBUG` | `true` | Disable in production |
-| `APP_URL` | `http://localhost:5040` | Base URL |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `APP_ENV` | `local` | Switch to `production` on the server |
+| `APP_DEBUG` | `true` | Must be `false` in production |
+| `APP_URL` | `http://localhost:5040` | Public base URL |
+| `APP_KEY` | generated | Laravel encryption key |
 
-### Session / Auth
+### Auth and sessions
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SESSION_DRIVER` | `cookie` | Keep as `cookie` for stateless API |
-| `SESSION_LIFETIME` | `1440` | Session lifetime in minutes (24 h) |
-| `SESSION_ENCRYPT` | `true` | Encrypt session cookie |
-| `SANCTUM_STATEFUL_DOMAINS` | `localhost,localhost:5173,localhost:5040` | Comma-separated origins that receive session cookies |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SESSION_DRIVER` | `cookie` | Cookie-based sessions |
+| `SESSION_ENCRYPT` | `true` | Encrypts session cookie payload |
+| `SESSION_LIFETIME` | `1440` | Minutes before session expiry |
+| `SANCTUM_STATEFUL_DOMAINS` | local hosts | Allowed stateful frontend origins |
 
 ### Database
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DB_CONNECTION` | `sqlite` | `sqlite` / `mysql` / `pgsql` |
-| `DB_DATABASE` | *(path to sqlite file)* | Absolute path for SQLite; DB name for MySQL/PgSQL |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DB_CONNECTION` | `sqlite` | Local default |
+| `DB_DATABASE` | framework default | SQLite path or database name |
 
-### Application settings
+### OCR and file handling
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MAX_FILE_SIZE` | `52428800` | Max upload size in bytes (50 MB) |
-| `MAX_FILES_PER_UPLOAD` | `20` | Max files per upload request |
-| `MAX_PAGES_OCR` | `10` | Max PDF pages to OCR |
-| `RATE_LIMIT_PER_MINUTE` | `30` | Upload rate limit per IP |
-| `MAX_FILE_AGE_DAYS` | `30` | Uploaded files older than this are deleted by the cleanup job |
-| `CACHE_TTL_DAYS` | `7` | OCR cache TTL |
-| `TESSERACT_TIMEOUT` | `60` | Tesseract per-image timeout (seconds) |
-| `TESSERACT_PSM` | `4` | Tesseract page segmentation mode |
-| `PDF_DPI` | `200` | DPI for PDF→image conversion |
-| `IMAGE_MAX_SIZE` | `1800` | Max image dimension (pixels) before OCR |
-| `CONFIDENCE_THRESHOLD` | `0.95` | Documents below this confidence go to the review queue |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MAX_FILE_SIZE` | `52428800` | Max single upload in bytes |
+| `MAX_FILES_PER_UPLOAD` | `20` | Max files per request |
+| `MAX_PAGES_OCR` | `10` | Max PDF pages converted for OCR |
+| `PDF_DPI` | `200` | PDF render resolution |
+| `IMAGE_MAX_SIZE` | `1800` | Largest image dimension before OCR |
+| `TESSERACT_TIMEOUT` | `30` | OCR timeout in seconds |
+| `TESSERACT_PSM` | `4` | Page segmentation mode |
+| `MAX_TEXT_EXTRACT_LENGTH` | `5000` | OCR text clip limit |
+| `CONFIDENCE_THRESHOLD` | `0.95` | Below this goes to review |
+| `RATE_LIMIT_PER_MINUTE` | `30` | Upload throttling |
+| `MAX_FILE_AGE_DAYS` | `30` | Upload retention |
+| `CACHE_TTL_DAYS` | `7` | OCR cache retention |
 
----
+## Auth Model
 
-## Creating Users
+The backend uses Laravel Sanctum with stateful cookie sessions.
 
-```bash
-# Create an admin
-php artisan admin:create --email=admin@example.com --name="Admin User" --role=admin
+Current frontend behavior:
 
-# Create a reviewer
-php artisan admin:create --email=reviewer@example.com --name="Reviewer" --role=reviewer
-
-# Non-interactive (CI / scripts)
-php artisan admin:create --email=ci@example.com --password=secret --role=reviewer
-```
+- the client sends requests to same-origin paths such as `/auth/login`
+- authenticated requests use `credentials: include`
+- the app does not rely on a separate frontend API base URL during local development because Vite proxies those paths to port `5040`
 
 Roles:
 
-| Role | Access |
-|------|--------|
-| `reviewer` | Can view and action documents in the review queue |
-| `admin` | Full access (superset of reviewer) |
+- `reviewer`: can work documents in the review queue
+- `admin`: reviewer permissions plus full administrative access
 
----
+## Public and Protected Routes
 
-## API Reference
+### Public routes
 
-All endpoints are under `/api/`. The frontend SPA must:
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Health check |
+| `POST` | `/upload` | Upload and classify files |
+| `GET` | `/files` | List files for an applicant |
+| `GET` | `/files/{id}` | Download one file |
+| `DELETE` | `/files/{id}` | Delete one file |
+| `GET` | `/download_zip` | Download matched files as ZIP |
+| `POST` | `/auth/login` | Start reviewer/admin session |
 
-1. `GET /sanctum/csrf-cookie` to obtain the XSRF token
-2. Send the `X-XSRF-TOKEN` header on every mutating request
-3. Include `withCredentials: true` on all requests
+### Authenticated routes
 
-### Auth
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/auth/logout` | End session |
+| `POST` | `/auth/refresh` | Refresh active session |
+| `GET` | `/auth/me` | Current user and session info |
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/auth/login` | — | Log in; sets session cookie |
-| POST | `/api/auth/logout` | ✓ | Log out; clears session |
-| POST | `/api/auth/refresh` | ✓ | Refresh session |
-| GET | `/api/auth/me` | ✓ | Current user + session info |
+### Reviewer and admin routes
 
-**Login request:**
+All `/admin/*` routes require `auth:sanctum` plus the `role:reviewer,admin` middleware.
 
-```json
-{ "email": "admin@example.com", "password": "...", "remember_me": false }
-```
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/admin/review-queue` | List queue items |
+| `GET` | `/admin/review-queue/{document}` | Fetch one document |
+| `POST` | `/admin/review-queue/{document}/claim` | Claim work item |
+| `POST` | `/admin/review-queue/{document}/release` | Return item to queue |
+| `POST` | `/admin/review-queue/{document}/resolve` | Accept, override, or reject |
+| `GET` | `/admin/review-queue/{document}/audit` | Review history |
+| `GET` | `/admin/review-queue/{document}/preview` | Preview image, text, or PDF |
 
-**Login response:**
+## Review Flow
 
-```json
-{
-  "message": "Успешный вход",
-  "user": {
-    "id": "...", "email": "...", "display_name": "...",
-    "role": "admin", "is_active": true, "last_login_at": "..."
-  },
-  "session": { "expires_at": "...", "remember_me": false }
-}
-```
+1. Applicant uploads one or more files with `name` and `lastname`
+2. OCR extracts text from PDFs or images
+3. `ClassifierService` predicts a category and confidence score
+4. High-confidence items remain in the normal uploaded state
+5. Low-confidence items are marked `queued` for human review
+6. Reviewer or admin claims, resolves, or overrides the classification
 
----
+Current built-in categories:
 
-### File Management
+- `Udostoverenie`
+- `ENT`
+- `Lgota`
+- `Diplom`
+- `Privivka`
+- `MedSpravka`
+- `Unclassified`
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/health` | — | Health check |
-| POST | `/api/upload` | — | Upload + classify files (rate-limited) |
-| GET | `/api/files` | — | List files (requires `?name=&lastname=`) |
-| GET | `/api/files/{id}` | — | Download single file |
-| GET | `/api/download_zip` | — | Download all matching files as ZIP |
-| DELETE | `/api/files/{id}` | — | Delete a file |
+## Storage Layout
 
-**Upload request** (`multipart/form-data`):
+Important write locations:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Applicant first name |
-| `lastname` | string | Applicant last name |
-| `files[]` | file(s) | PDF, JPG, PNG — up to 20 files, 50 MB each |
+- `database/database.sqlite`: default local database
+- `storage/app/uploads`: uploaded files
+- `storage/app/cache`: OCR cache files keyed by SHA-256
+- `storage/logs`: Laravel, nginx, php-fpm, and scheduler logs in production containers
 
-**Upload response:**
+The scheduled command `app:cleanup-old-files` is registered in `routes/console.php` and runs hourly.
 
-```json
-{
-  "success":      [{ "id": "...", "originalName": "...", "category": "Diplom", "confidence": 0.95 }],
-  "unclassified": [{ "id": "...", "category": "Unclassified" }],
-  "failed":       [{ "filename": "bad.pdf", "error": "..." }],
-  "summary":      { "total": 3, "successful": 2, "unclassified": 0, "failed": 1 }
-}
-```
+## Architecture Notes
 
-Document categories: `Udostoverenie`, `ENT`, `Lgota`, `Diplom`, `Privivka`, `MedSpravka`, `Unclassified`
+High-level backend components:
 
----
+- `app/Services/OcrService.php`: PDF conversion, image preprocessing, OCR, OCR cache
+- `app/Services/ClassifierService.php`: keyword and fuzzy classification logic
+- `app/Services/DocumentService.php`: document persistence and retrieval
+- `app/Services/ReviewService.php`: claim/release/resolve workflow
+- `app/Console/Commands/CreateAdminUser.php`: reviewer/admin bootstrap command
+- `app/Console/Commands/CleanupOldFiles.php`: retention cleanup
 
-### Admin / Review Queue
+Production serving model:
 
-All endpoints require authentication + `role:reviewer,admin`.
+- host nginx handles TLS
+- container nginx listens on port `5040`
+- php-fpm handles Laravel execution
+- the built frontend is copied into `public/build` by the root `Dockerfile`
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/admin/review-queue` | List documents; `?status=queued&limit=50&offset=0` |
-| POST | `/api/admin/review-queue/{id}/claim` | Claim a document for review |
-| POST | `/api/admin/review-queue/{id}/release` | Release back to queue |
-| POST | `/api/admin/review-queue/{id}/resolve` | Resolve with final category |
-| GET | `/api/admin/review-queue/{id}` | Get document details |
-| GET | `/api/admin/review-queue/{id}/audit` | Get audit trail |
-| GET | `/api/admin/review-queue/{id}/preview` | Document preview (PDF inline / image base64) |
+## Troubleshooting
 
-**Resolve request:**
-
-```json
-{
-  "final_category":     "Diplom",
-  "applicant_name":     "John",
-  "applicant_lastname": "Doe",
-  "comment":            "Corrected from MedSpravka"
-}
-```
-
----
-
-## Docker / Production Deployment
-
-### Build and run
-
-```bash
-# From the repo root
-docker compose up --build -d
-```
-
-The container runs on **port 5040** and serves both the API and the built React frontend.
-
-### First run inside the container
-
-```bash
-# Migrations run automatically via Dockerfile, but can be triggered manually:
-docker exec ai-reception php artisan migrate --force
-
-# Create the first admin user:
-docker exec -it ai-reception php artisan admin:create \
-  --email=admin@yourdomain.com \
-  --name="Administrator" \
-  --role=admin
-```
-
-### What runs inside the container
-
-Managed by **Supervisor**:
-
-| Process | Role |
-|---------|------|
-| `php-fpm` | PHP request handler |
-| `nginx` | Reverse proxy on port 5040, serves static assets |
-| `scheduler` | Runs `php artisan schedule:run` every 60 s |
-
-### Volumes
-
-| Named volume | Container path | Purpose |
-|-------------|---------------|---------|
-| `ai_reception_uploads` | `/app/storage/app/uploads` | Uploaded documents |
-| `ai_reception_db` | `/app/database` | SQLite database |
-| `ai_reception_ocrcache` | `/app/storage/app/cache` | OCR cache (safe to drop) |
-
-### Host nginx (HTTPS termination)
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name ai-reception.tou.edu.kz;
-
-    ssl_certificate     /etc/nginx/ssl/ai-reception.tou.edu.kz.crt;
-    ssl_certificate_key /etc/nginx/ssl/ai-reception.tou.edu.kz.key;
-
-    client_max_body_size 55M;
-
-    location / {
-        proxy_pass         http://127.0.0.1:5040;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
-    }
-}
-```
-
-### Production `.env` checklist
-
-```dotenv
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://ai-reception.tou.edu.kz
-APP_KEY=base64:<run: php artisan key:generate --show>
-
-SESSION_DRIVER=cookie
-SESSION_ENCRYPT=true
-
-SANCTUM_STATEFUL_DOMAINS=ai-reception.tou.edu.kz
-
-RATE_LIMIT_PER_MINUTE=60
-MAX_FILE_AGE_DAYS=90
-```
-
-Cache config/routes after any `.env` or code change:
-
-```bash
-php artisan config:cache && php artisan route:cache && php artisan view:cache
-```
-
----
-
-## Architecture
-
-```
-api/
-├── app/
-│   ├── Console/Commands/
-│   │   ├── CleanupOldFiles.php          # Hourly: delete old uploads + expired OCR cache
-│   │   └── CreateAdminUser.php          # php artisan admin:create
-│   ├── Http/
-│   │   ├── Controllers/
-│   │   │   ├── AuthController.php       # login / logout / refresh / me
-│   │   │   ├── FileController.php       # upload / list / download / delete / health
-│   │   │   └── Admin/
-│   │   │       └── ReviewQueueController.php  # claim / release / resolve / preview / audit
-│   │   ├── Middleware/
-│   │   │   └── RequireRole.php          # role:reviewer,admin
-│   │   └── Resources/
-│   │       ├── DocumentResource.php
-│   │       ├── ReviewActionResource.php
-│   │       └── UserResource.php
-│   ├── Models/
-│   │   ├── Document.php
-│   │   ├── DocumentText.php
-│   │   ├── ReviewAction.php
-│   │   └── User.php
-│   ├── Providers/
-│   │   └── AppServiceProvider.php       # Rate limiter (30 req/min per IP on /upload)
-│   └── Services/
-│       ├── ClassifierService.php        # Keyword exact-match + token-set-ratio fuzzy fallback
-│       ├── DocumentService.php          # Upload pipeline, file listing/download/delete/zip
-│       ├── OcrService.php               # pdftoppm + Tesseract + SHA-256 filesystem cache
-│       └── ReviewService.php            # Claim/release/resolve with DB transactions + audit log
-├── database/migrations/                 # 6 migrations
-├── routes/
-│   ├── api.php                          # 20 API endpoints
-│   ├── web.php                          # SPA fallback (serves React index.html)
-│   └── console.php                      # Hourly scheduler
-└── docker/
-    ├── nginx.conf                        # Port 5040
-    └── supervisord.conf                  # php-fpm + nginx + scheduler
-```
-
-### Upload flow
-
-```
-POST /api/upload
-  │
-  ├─ Validate file type + size
-  ├─ OcrService::extractText()
-  │    ├─ SHA-256 cache hit → return cached text
-  │    ├─ PDF → pdftoppm → pages → Tesseract (sequential)
-  │    └─ Image → greyscale + resize → Tesseract
-  ├─ ClassifierService::classify()
-  │    ├─ Exact keyword match (fast path)
-  │    └─ Token-set ratio fuzzy match (fallback, threshold 60)
-  ├─ confidence ≥ 0.95 → status = uploaded  (no review needed)
-  │   confidence < 0.95 → status = queued   (→ review queue)
-  ├─ Write file: storage/app/uploads/{name}_{lastname}_{category}_{idx}_{uuid}.{ext}
-  └─ Insert Document + DocumentText rows
-```
-
-### Review workflow
-
-```
-GET  /admin/review-queue          → list queued documents
-POST /admin/review-queue/{id}/claim   → queued → in_review (locked to reviewer)
-POST /admin/review-queue/{id}/resolve → in_review → resolved
-     action = accept   if final_category == predicted
-     action = override if final_category != predicted
-POST /admin/review-queue/{id}/release → in_review → queued (give back)
-
-Every state change inserts a ReviewAction row (full audit trail).
-```
+- If uploads fail only on Windows, check whether PHP temp uploads and `storage/app/uploads` live on different volumes; plain file moves across volumes have caused issues in this repo
+- If OCR returns empty text, verify `tesseract` and `pdftoppm` are installed and reachable from the PHP process environment
+- If login appears to succeed but subsequent requests are anonymous, re-check `SANCTUM_STATEFUL_DOMAINS`, `APP_URL`, and cookie settings
+- If the review queue is not progressing, confirm the queue worker from `composer dev` is running
+- If production serves JSON instead of the SPA, confirm the frontend build exists in `public/build/index.html`

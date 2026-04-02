@@ -544,7 +544,7 @@ export default function AIReceptionApp() {
         };
 
         const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          name
+          name,
         )}&lastname=${encodeURIComponent(lastName)}`;
         const filesResponse = await fetch(filesUrl).catch(() => null);
         let persisted: UploadedFile[] = [];
@@ -577,22 +577,33 @@ export default function AIReceptionApp() {
         const successCount = uploadResult.success?.length ?? 0;
         const unclassifiedCount = uploadResult.unclassified?.length ?? 0;
         try {
-          if (successCount > 0 && failedCount === 0 && unclassifiedCount === 0) {
+          if (
+            successCount > 0 &&
+            failedCount === 0 &&
+            unclassifiedCount === 0
+          ) {
             toast.success(strings.uploadSuccess);
-          } else if (successCount > 0 && (failedCount > 0 || unclassifiedCount > 0)) {
+          } else if (
+            successCount > 0 &&
+            (failedCount > 0 || unclassifiedCount > 0)
+          ) {
             const notOk = failedCount + unclassifiedCount;
             toast.warning(
-              `Классифицировано ${successCount} из ${successCount + notOk} файлов. ${unclassifiedCount > 0 ? `${unclassifiedCount} не удалось классифицировать. ` : ""}${failedCount > 0 ? `${failedCount} не удалось обработать.` : ""}`
+              `Классифицировано ${successCount} из ${successCount + notOk} файлов. ${unclassifiedCount > 0 ? `${unclassifiedCount} не удалось классифицировать. ` : ""}${failedCount > 0 ? `${failedCount} не удалось обработать.` : ""}`,
             );
-          } else if (unclassifiedCount > 0 && successCount === 0 && failedCount === 0) {
+          } else if (
+            unclassifiedCount > 0 &&
+            successCount === 0 &&
+            failedCount === 0
+          ) {
             toast.warning(
-              `Не удалось классифицировать ${unclassifiedCount} файл(ов). Тип документов не распознан.`
+              `Не удалось классифицировать ${unclassifiedCount} файл(ов). Тип документов не распознан.`,
             );
           } else {
             toast.error(
               failedCount > 0
                 ? `Не удалось обработать ${failedCount} файл(ов). Проверьте формат и повторите попытку.`
-                : strings.uploadFail
+                : strings.uploadFail,
             );
           }
         } catch {
@@ -609,7 +620,7 @@ export default function AIReceptionApp() {
         setIsLoading(false);
       }
     },
-    [isLoading, name, lastName]
+    [isLoading, name, lastName],
   );
 
   const handleDrop = useCallback(
@@ -637,7 +648,7 @@ export default function AIReceptionApp() {
 
       uploadFiles(acceptedFiles);
     },
-    [isFormValid, uploadFiles]
+    [isFormValid, uploadFiles],
   );
 
   const pickFiles = useCallback(() => {
@@ -666,9 +677,9 @@ export default function AIReceptionApp() {
         const useLast = queriedLastName ?? lastName;
 
         const url = `${getBackendOrigin()}/files/${encodeURIComponent(
-          file.id
+          file.id,
         )}?name=${encodeURIComponent(useName)}&lastname=${encodeURIComponent(
-          useLast
+          useLast,
         )}`;
         const response = await fetch(url, { method: "DELETE" });
 
@@ -683,13 +694,13 @@ export default function AIReceptionApp() {
         }
 
         const filesUrl = `${getBackendOrigin()}/files?name=${encodeURIComponent(
-          useName
+          useName,
         )}&lastname=${encodeURIComponent(useLast)}`;
         const filesResponse = await fetch(filesUrl);
         if (!filesResponse.ok) {
           console.error(
             "Не удалось получить список файлов после удаления",
-            filesResponse.status
+            filesResponse.status,
           );
           return;
         }
@@ -700,7 +711,7 @@ export default function AIReceptionApp() {
         console.error("Ошибка удаления:", error);
       }
     },
-    [name, lastName, queriedName, queriedLastName]
+    [name, lastName, queriedName, queriedLastName],
   );
 
   const downloadFile = useCallback(
@@ -710,9 +721,9 @@ export default function AIReceptionApp() {
       const useLast = queriedLastName ?? lastName;
 
       const url = `${getBackendOrigin()}/files/${encodeURIComponent(
-        file.id
+        file.id,
       )}?name=${encodeURIComponent(useName)}&lastname=${encodeURIComponent(
-        useLast
+        useLast,
       )}`;
       const a = document.createElement("a");
       a.href = url;
@@ -723,7 +734,7 @@ export default function AIReceptionApp() {
       a.click();
       a.remove();
     },
-    [name, lastName, queriedName, queriedLastName]
+    [name, lastName, queriedName, queriedLastName],
   );
 
   const downloadAll = useCallback(() => {
@@ -731,7 +742,7 @@ export default function AIReceptionApp() {
     const useLast = queriedLastName ?? lastName;
 
     const url = `${getBackendOrigin()}/download_zip?name=${encodeURIComponent(
-      useName
+      useName,
     )}&lastname=${encodeURIComponent(useLast)}`;
     const a = document.createElement("a");
     a.href = url;
@@ -778,12 +789,15 @@ export default function AIReceptionApp() {
   }, []);
 
   const groupedFiles = React.useMemo(() => {
-    return files.reduce((acc, file) => {
-      const categoryKey = normalizeCategoryKey(file.category);
-      if (!acc[categoryKey]) acc[categoryKey] = [];
-      acc[categoryKey].push(file);
-      return acc;
-    }, {} as Record<string, UploadedFile[]>);
+    return files.reduce(
+      (acc, file) => {
+        const categoryKey = normalizeCategoryKey(file.category);
+        if (!acc[categoryKey]) acc[categoryKey] = [];
+        acc[categoryKey].push(file);
+        return acc;
+      },
+      {} as Record<string, UploadedFile[]>,
+    );
   }, [files]);
 
   const openDeleteDialogForFile = useCallback((file: UploadedFile) => {

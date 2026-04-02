@@ -63,7 +63,7 @@ function ReviewQueuePage() {
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [filter, setFilter] = useState<"all" | "queued" | "in_review">(
-    "queued"
+    "queued",
   );
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -84,7 +84,7 @@ function ReviewQueuePage() {
 
   // Preview state
   const [preview, setPreview] = useState<reviewApi.DocumentPreview | null>(
-    null
+    null,
   );
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
@@ -176,29 +176,36 @@ function ReviewQueuePage() {
   }, [selectedDoc]);
 
   // Claim document
-  const handleClaim = useCallback(async (doc: Document) => {
-    setIsClaiming(true);
-    try {
-      const updated = await reviewApi.claimDocument(doc.id);
-      setDocuments((prev) => prev.map((d) => (d.id === doc.id ? updated : d)));
-      setSelectedDoc(updated);
-      toast.success("Документ принят на проверку");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Не удалось принять документ";
-      toast.error(message);
+  const handleClaim = useCallback(
+    async (doc: Document) => {
+      setIsClaiming(true);
+      try {
+        const updated = await reviewApi.claimDocument(doc.id);
+        setDocuments((prev) =>
+          prev.map((d) => (d.id === doc.id ? updated : d)),
+        );
+        setSelectedDoc(updated);
+        toast.success("Документ принят на проверку");
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Не удалось принять документ";
+        toast.error(message);
 
-      // Refresh documents to sync state with backend
-      await loadDocuments();
+        // Refresh documents to sync state with backend
+        await loadDocuments();
 
-      // Clear selection if document state changed
-      if (selectedDoc?.id === doc.id) {
-        setSelectedDoc(null);
+        // Clear selection if document state changed
+        if (selectedDoc?.id === doc.id) {
+          setSelectedDoc(null);
+        }
+      } finally {
+        setIsClaiming(false);
       }
-    } finally {
-      setIsClaiming(false);
-    }
-  }, [loadDocuments, selectedDoc]);
+    },
+    [loadDocuments, selectedDoc],
+  );
 
   // Release document
   const handleRelease = useCallback(
@@ -207,7 +214,7 @@ function ReviewQueuePage() {
       try {
         const updated = await reviewApi.releaseDocument(doc.id);
         setDocuments((prev) =>
-          prev.map((d) => (d.id === doc.id ? updated : d))
+          prev.map((d) => (d.id === doc.id ? updated : d)),
         );
         if (selectedDoc?.id === doc.id) {
           setSelectedDoc(null);
@@ -223,7 +230,7 @@ function ReviewQueuePage() {
         setIsReleasing(false);
       }
     },
-    [selectedDoc]
+    [selectedDoc],
   );
 
   // Resolve document
@@ -250,7 +257,7 @@ function ReviewQueuePage() {
       });
 
       setDocuments((prev) =>
-        prev.map((d) => (d.id === selectedDoc.id ? updated : d))
+        prev.map((d) => (d.id === selectedDoc.id ? updated : d)),
       );
       setSelectedDoc(null);
       toast.success("Проверка успешно завершена!");
@@ -649,7 +656,7 @@ function ReviewQueuePage() {
                                 day: "numeric",
                                 hour: "2-digit",
                                 minute: "2-digit",
-                              }
+                              },
                             )}
                           </div>
                         </div>
@@ -736,7 +743,7 @@ function ReviewQueuePage() {
                                 day: "numeric",
                                 hour: "2-digit",
                                 minute: "2-digit",
-                              }
+                              },
                             )}
                           </div>
                         </div>
@@ -901,7 +908,7 @@ function ReviewQueuePage() {
                                   <SelectItem key={key} value={key}>
                                     {name}
                                   </SelectItem>
-                                )
+                                ),
                               )}
                             </SelectContent>
                           </Select>

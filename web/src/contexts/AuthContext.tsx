@@ -19,7 +19,11 @@ interface AuthContextType {
   isLoading: boolean;
   isRefreshing: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
+  login: (
+    email: string,
+    password: string,
+    rememberMe?: boolean,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<boolean>;
 }
@@ -46,7 +50,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (refreshed) {
         // Only update if the session data has actually changed
         setUser((prev) => {
-          if (prev?.id === refreshed.user.id && prev?.email === refreshed.user.email) {
+          if (
+            prev?.id === refreshed.user.id &&
+            prev?.email === refreshed.user.email
+          ) {
             return prev;
           }
           return refreshed.user;
@@ -135,11 +142,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     // Schedule the refresh
-    refreshTimerRef.current = window.setTimeout(() => {
-      refreshTimerRef.current = null;
-      lastRefreshAttemptRef.current = Date.now();
-      void refresh();
-    }, Math.max(delay, 100)); // Ensure at least 100ms delay
+    refreshTimerRef.current = window.setTimeout(
+      () => {
+        refreshTimerRef.current = null;
+        lastRefreshAttemptRef.current = Date.now();
+        void refresh();
+      },
+      Math.max(delay, 100),
+    ); // Ensure at least 100ms delay
 
     return () => {
       if (refreshTimerRef.current) {
@@ -192,7 +202,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [isLoading, isRefreshing, login, logout, refresh, sessionInfo, user],
   );
 
-  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextType {

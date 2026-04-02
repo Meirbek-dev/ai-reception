@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build && tsc",
     "serve": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check-types": "tsc --noEmit"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.2.6",

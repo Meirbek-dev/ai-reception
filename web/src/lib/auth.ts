@@ -73,7 +73,8 @@ async function buildApiError(
 ): Promise<Error> {
   const payload = await readJsonSafe<ApiErrorResponse>(response);
   const message =
-    extractErrorMessage(payload) || `${fallbackMessage} (код ${response.status})`;
+    extractErrorMessage(payload) ||
+    `${fallbackMessage} (код ${response.status})`;
   return new Error(message);
 }
 

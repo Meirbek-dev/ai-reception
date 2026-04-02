@@ -61,8 +61,9 @@ export async function getReviewQueue(params?: {
   if (params?.limit) searchParams.set("limit", params.limit.toString());
   if (params?.offset) searchParams.set("offset", params.offset.toString());
 
-  const url = `${getBackendOrigin()}/admin/review-queue${searchParams.toString() ? `?${searchParams.toString()}` : ""
-    }`;
+  const url = `${getBackendOrigin()}/admin/review-queue${
+    searchParams.toString() ? `?${searchParams.toString()}` : ""
+  }`;
 
   const response = await fetch(url, {
     method: "GET",
@@ -86,7 +87,7 @@ export async function claimDocument(documentId: string): Promise<Document> {
     {
       method: "POST",
       credentials: "include",
-    }
+    },
   );
 
   if (!response.ok) {
@@ -106,7 +107,7 @@ export async function releaseDocument(documentId: string): Promise<Document> {
     {
       method: "POST",
       credentials: "include",
-    }
+    },
   );
 
   if (!response.ok) {
@@ -122,7 +123,7 @@ export async function releaseDocument(documentId: string): Promise<Document> {
  */
 export async function resolveDocument(
   documentId: string,
-  request: ResolveRequest
+  request: ResolveRequest,
 ): Promise<Document> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/review-queue/${documentId}/resolve`,
@@ -133,7 +134,7 @@ export async function resolveDocument(
       },
       credentials: "include",
       body: JSON.stringify(request),
-    }
+    },
   );
 
   if (!response.ok) {
@@ -153,7 +154,7 @@ export async function getDocument(documentId: string): Promise<Document> {
     {
       method: "GET",
       credentials: "include",
-    }
+    },
   );
 
   if (!response.ok) {
@@ -168,14 +169,14 @@ export async function getDocument(documentId: string): Promise<Document> {
  * Get document preview
  */
 export async function getDocumentPreview(
-  documentId: string
+  documentId: string,
 ): Promise<DocumentPreview> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/documents/${documentId}/preview`,
     {
       method: "GET",
       credentials: "include",
-    }
+    },
   );
 
   if (!response.ok) {
@@ -203,14 +204,14 @@ export async function getDocumentPreview(
  * Get document audit trail
  */
 export async function getDocumentAudit(
-  documentId: string
+  documentId: string,
 ): Promise<ReviewAction[]> {
   const response = await fetch(
     `${getBackendOrigin()}/admin/documents/${documentId}/audit`,
     {
       method: "GET",
       credentials: "include",
-    }
+    },
   );
 
   if (!response.ok) {

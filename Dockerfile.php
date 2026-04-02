@@ -1,6 +1,6 @@
 # Production multi-stage Dockerfile for PHP + Laravel
 # 1) frontend-builder: build the React web app with pnpm
-# 2) runtime: PHP 8.3 + Composer + OS packages + Laravel
+# 2) runtime: PHP 8.4 + Composer + OS packages + Laravel
 
 # --- Frontend builder -------------------------------------------------------
 FROM node:25-slim AS frontend-builder

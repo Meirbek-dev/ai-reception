@@ -6,8 +6,7 @@
 const JSON_HEADERS = Object.freeze({ "Content-Type": "application/json" });
 const NETWORK_ERROR_MESSAGE = "Нет соединения с сервером. Проверьте сеть.";
 
-const getBackendOrigin = () =>
-  import.meta.env?.DEV ? "http://localhost:5040" : window.location.origin;
+const getBackendOrigin = () => "";
 
 export type UserRole = "reviewer" | "admin";
 

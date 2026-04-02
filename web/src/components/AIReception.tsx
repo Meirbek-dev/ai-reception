@@ -78,8 +78,7 @@ const strings = {
   noFiles: "Нет загруженных документов",
 };
 
-const getBackendOrigin = () =>
-  import.meta.env?.DEV ? "http://localhost:5040" : window.location.origin;
+const getBackendOrigin = () => "";
 
 const categoryInfo: Record<string, CategoryInfo> = {
   Udostoverenie: {

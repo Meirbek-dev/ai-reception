@@ -3,8 +3,7 @@
  * Handles communication with backend /admin/* endpoints
  */
 
-const getBackendOrigin = () =>
-  import.meta.env?.DEV ? "http://localhost:5040" : window.location.origin;
+const getBackendOrigin = () => "";
 
 export interface Document {
   id: string;

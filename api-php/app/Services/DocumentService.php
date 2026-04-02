@@ -68,7 +68,19 @@ class DocumentService
             $candidate = "{$safeName}_{$safeLastname}_{$category}_{$idx}_{$fileId}.{$ext}";
             $dest      = $this->uploadDir.'/'.$candidate;
             if (! file_exists($dest)) {
-                rename($tmpPath, $dest);
+                if (! $this->moveProcessedFile($tmpPath, $dest)) {
+                    return $this->buildClientPayload(
+                        $fileId,
+                        $originalName,
+                        $category,
+                        '',
+                        $size,
+                        $modified,
+                        'error: failed to persist uploaded file',
+                        $confidence,
+                        null
+                    );
+                }
                 $storedName = $candidate;
                 $destPath   = $dest;
                 break;
@@ -369,6 +381,25 @@ class DocumentService
         $safe = mb_substr($safe, 0, $maxLen);
 
         return $safe !== '' ? $safe : 'anon';
+    }
+
+    private function moveProcessedFile(string $source, string $destination): bool
+    {
+        if (! is_file($source)) {
+            return false;
+        }
+
+        if (@rename($source, $destination)) {
+            return true;
+        }
+
+        if (! @copy($source, $destination)) {
+            return false;
+        }
+
+        @unlink($source);
+
+        return true;
     }
 
     private function buildClientPayload(

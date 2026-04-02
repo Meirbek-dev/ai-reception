@@ -511,7 +511,7 @@ export default function AIReceptionApp() {
       setIsLoading(true);
 
       const formData = new FormData();
-      fileList.forEach((file) => formData.append("files", file));
+      fileList.forEach((file) => formData.append("files[]", file));
       formData.append("name", name);
       formData.append("lastname", lastName);
 
@@ -519,6 +519,9 @@ export default function AIReceptionApp() {
         const uploadUrl = `${getBackendOrigin()}/upload`;
         const response = await fetch(uploadUrl, {
           method: "POST",
+          headers: {
+            Accept: "application/json",
+          },
           body: formData,
         });
 
@@ -549,6 +552,10 @@ export default function AIReceptionApp() {
           persisted = (await filesResponse.json()) as UploadedFile[];
         }
 
+        if (uploadResult.failed && uploadResult.failed.length > 0) {
+          console.warn("Upload: failed files", uploadResult.failed);
+        }
+
         const returned: UploadedFile[] = [
           ...(uploadResult.success || []),
           ...(uploadResult.unclassified || []),
@@ -565,8 +572,22 @@ export default function AIReceptionApp() {
         setQueriedLastName(lastName);
 
         setFiles(merged as UploadedFile[]);
+
+        const failedCount = uploadResult.failed?.length ?? 0;
         try {
-          toast.success(strings.uploadSuccess);
+          if (merged.length > 0 && failedCount === 0) {
+            toast.success(strings.uploadSuccess);
+          } else if (merged.length > 0 && failedCount > 0) {
+            toast.warning(
+              `Обработано ${merged.length} из ${merged.length + failedCount} файлов. ${failedCount} не удалось обработать.`
+            );
+          } else {
+            toast.error(
+              failedCount > 0
+                ? `Не удалось обработать ${failedCount} файл(ов). Проверьте формат и повторите попытку.`
+                : strings.uploadFail
+            );
+          }
         } catch {
           /* ignore if toast not available during SSR */
         }

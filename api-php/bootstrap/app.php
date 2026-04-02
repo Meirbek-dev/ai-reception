@@ -16,6 +16,18 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
+
+        // Public file-management and health endpoints do not need CSRF protection.
+        // They are unauthenticated routes, so cross-site forgery is not a concern.
+        $middleware->validateCsrfTokens(except: [
+            '/upload',
+            '/files',
+            '/files/*',
+            '/download_zip',
+            '/health',
+            '/auth/login',
+        ]);
+
         $middleware->alias([
             'role' => RequireRole::class,
         ]);

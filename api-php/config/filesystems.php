@@ -47,6 +47,22 @@ return [
             'report' => false,
         ],
 
+        // AI Reception — uploaded documents
+        'uploads' => [
+            'driver' => 'local',
+            'root'   => storage_path('app/uploads'),
+            'throw'  => false,
+            'report' => false,
+        ],
+
+        // AI Reception — OCR result cache (SHA-256 keyed JSON files)
+        'ocr_cache' => [
+            'driver' => 'local',
+            'root'   => storage_path('app/cache'),
+            'throw'  => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

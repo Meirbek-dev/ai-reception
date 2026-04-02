@@ -123,4 +123,22 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    // -------------------------------------------------------------------------
+    // AI Reception - custom settings (mirrors Python config.py)
+    // -------------------------------------------------------------------------
+
+    'max_file_size'           => (int) env('MAX_FILE_SIZE', 52428800),      // 50 MB
+    'max_files_per_upload'    => (int) env('MAX_FILES_PER_UPLOAD', 20),
+    'max_pages_ocr'           => (int) env('MAX_PAGES_OCR', 10),
+    'rate_limit_per_minute'   => (int) env('RATE_LIMIT_PER_MINUTE', 30),
+    'max_file_age_days'       => (int) env('MAX_FILE_AGE_DAYS', 30),
+    'cache_ttl_days'          => (int) env('CACHE_TTL_DAYS', 7),
+    'tesseract_timeout'       => (int) env('TESSERACT_TIMEOUT', 30),
+    'pdf_dpi'                 => (int) env('PDF_DPI', 200),
+    'image_max_size'          => (int) env('IMAGE_MAX_SIZE', 1800),
+    'tesseract_psm'           => (int) env('TESSERACT_PSM', 4),
+    'max_text_extract_length' => (int) env('MAX_TEXT_EXTRACT_LENGTH', 5000),
+    'confidence_threshold'    => (float) env('CONFIDENCE_THRESHOLD', 0.95),
+    'max_workers'             => (int) env('MAX_WORKERS', 1),
+
 ];

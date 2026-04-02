@@ -2,24 +2,29 @@ services:
   ai-reception:
     build:
       context: .
-      dockerfile: ./Dockerfile
+      dockerfile: ./Dockerfile.php
     container_name: ai-reception
     restart: unless-stopped
-    # Publish container port 5040 on the host as 5040.
     ports:
       - "5040:5040"
-    # Persist uploads using a named volume (keeps uploads safe across rebuilds)
     volumes:
-      - uploads:/app/uploads
-      - dbdata:/app/data
+      # Persist uploaded documents
+      - uploads:/app/storage/app/uploads
+      # Persist SQLite database
+      - dbdata:/app/database
+      # Persist OCR cache (optional, can be dropped without data loss)
+      - ocrcache:/app/storage/app/cache
     environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - APP_URL=https://ai-reception.tou.edu.kz
       - TESSDATA_PREFIX=/usr/share/tessdata/
-      - ENVIRONMENT=production
-      - UVICORN_HOST=0.0.0.0
-      - UVICORN_WORKERS=4
+      - SESSION_DRIVER=cookie
+      - SESSION_ENCRYPT=true
+    env_file:
+      - api-php/.env
     healthcheck:
-      # Check the JSON health endpoint and also ensure the web root responds (index.html)
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:5040/health || exit 1 && curl -fsS http://127.0.0.1:5040/ || true"]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:5040/api/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -35,3 +40,5 @@ volumes:
     name: ai_reception_uploads
   dbdata:
     name: ai_reception_db
+  ocrcache:
+    name: ai_reception_ocrcache

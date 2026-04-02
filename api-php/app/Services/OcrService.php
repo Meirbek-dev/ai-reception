@@ -1,0 +1,202 @@
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Log;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\ImageManager;
+use thiagoalessio\TesseractOCR\TesseractOCR;
+
+class OcrService
+{
+    private int $maxPagesOcr;
+    private int $pdfDpi;
+    private int $imageMaxSize;
+    private int $tesseractPsm;
+    private int $tesseractTimeout;
+    private int $maxTextLength;
+    private int $cacheTtlDays;
+    private string $cacheDir;
+
+    public function __construct()
+    {
+        $this->maxPagesOcr      = (int) config('app.max_pages_ocr', 10);
+        $this->pdfDpi           = (int) config('app.pdf_dpi', 200);
+        $this->imageMaxSize     = (int) config('app.image_max_size', 1800);
+        $this->tesseractPsm     = (int) config('app.tesseract_psm', 4);
+        $this->tesseractTimeout = (int) config('app.tesseract_timeout', 30);
+        $this->maxTextLength    = (int) config('app.max_text_extract_length', 5000);
+        $this->cacheTtlDays     = (int) config('app.cache_ttl_days', 7);
+        $this->cacheDir         = storage_path('app/cache');
+    }
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    /**
+     * Extract text from a file path.
+     * Checks the SHA-256 cache first; performs OCR on a cache miss.
+     */
+    public function extractText(string $filePath): string
+    {
+        $hash   = $this->cacheKey($filePath);
+        $cached = $this->readCache($hash);
+
+        if ($cached !== null) {
+            Log::info("OCR cache hit: {$hash}");
+            return $cached;
+        }
+
+        $ext  = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        $text = match ($ext) {
+            'pdf'         => $this->extractFromPdf($filePath),
+            'jpg', 'jpeg',
+            'png'         => $this->extractFromImage($filePath),
+            default       => '',
+        };
+
+        $this->writeCache($hash, $text);
+        return $text;
+    }
+
+    // -------------------------------------------------------------------------
+    // OCR internals
+    // -------------------------------------------------------------------------
+
+    private function extractFromPdf(string $filePath): string
+    {
+        $tmpPrefix = tempnam(sys_get_temp_dir(), 'pdf_ocr_');
+        @unlink($tmpPrefix); // pdftoppm adds extensions itself
+
+        $lastPage = $this->maxPagesOcr;
+        $dpi      = $this->pdfDpi;
+
+        // Convert PDF pages to PNG images via pdftoppm (poppler)
+        $cmd    = sprintf(
+            'pdftoppm -r %d -png -l %d %s %s 2>&1',
+            $dpi,
+            $lastPage,
+            escapeshellarg($filePath),
+            escapeshellarg($tmpPrefix)
+        );
+        exec($cmd, $output, $exitCode);
+
+        $images = glob($tmpPrefix.'-*.png') ?: glob($tmpPrefix.'*.png') ?: [];
+
+        if (empty($images)) {
+            Log::warning("pdftoppm produced no images for: {$filePath}. Output: ".implode("\n", $output));
+            return '';
+        }
+
+        sort($images); // ensure page order
+
+        $texts = [];
+        foreach ($images as $imgPath) {
+            $texts[] = $this->ocrImageFile($imgPath);
+            @unlink($imgPath);
+        }
+
+        $combined = implode("\n", array_filter($texts));
+        return mb_substr($combined, 0, $this->maxTextLength);
+    }
+
+    private function extractFromImage(string $filePath): string
+    {
+        $preprocessed = $this->preprocessImage($filePath);
+        $text         = $this->ocrImageFile($preprocessed);
+        if ($preprocessed !== $filePath) {
+            @unlink($preprocessed);
+        }
+        return mb_substr($text, 0, $this->maxTextLength);
+    }
+
+    /**
+     * Run Tesseract on a single image file.
+     */
+    private function ocrImageFile(string $imagePath): string
+    {
+        try {
+            return (new TesseractOCR($imagePath))
+                ->lang('rus', 'kaz', 'eng')
+                ->psm($this->tesseractPsm)
+                ->run();
+        } catch (\Throwable $e) {
+            Log::warning("Tesseract failed for {$imagePath}: {$e->getMessage()}");
+            return '';
+        }
+    }
+
+    /**
+     * Preprocess image: convert to greyscale + resize to max dimension.
+     * Returns path to preprocessed temp file (or original if unchanged).
+     */
+    private function preprocessImage(string $filePath): string
+    {
+        try {
+            $manager = new ImageManager(new Driver());
+            $img     = $manager->read($filePath);
+
+            $img->greyscale();
+
+            $w = $img->width();
+            $h = $img->height();
+            if (max($w, $h) > $this->imageMaxSize) {
+                $img->scaleDown($this->imageMaxSize, $this->imageMaxSize);
+            }
+
+            $tmp = tempnam(sys_get_temp_dir(), 'ocr_img_').'.png';
+            $img->save($tmp);
+            return $tmp;
+        } catch (\Throwable $e) {
+            Log::warning("Image preprocessing failed: {$e->getMessage()}");
+            return $filePath; // fall back to original
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Cache helpers  (SHA-256 keyed JSON files, same layout as Python version)
+    // -------------------------------------------------------------------------
+
+    private function cacheKey(string $filePath): string
+    {
+        return hash_file('sha256', $filePath);
+    }
+
+    private function cachePath(string $hash): string
+    {
+        $subdir = substr($hash, 0, 2);
+        return $this->cacheDir."/{$subdir}/{$hash}.json";
+    }
+
+    private function readCache(string $hash): ?string
+    {
+        $path = $this->cachePath($hash);
+        if (! file_exists($path)) {
+            return null;
+        }
+
+        // Expire check
+        $age = (time() - filemtime($path)) / 86400;
+        if ($age > $this->cacheTtlDays) {
+            @unlink($path);
+            return null;
+        }
+
+        $data = json_decode(file_get_contents($path), true);
+        return isset($data['text']) ? (string) $data['text'] : null;
+    }
+
+    private function writeCache(string $hash, string $text): void
+    {
+        $path = $this->cachePath($hash);
+        $dir  = dirname($path);
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+        file_put_contents($path, json_encode([
+            'text'      => $text,
+            'timestamp' => time(),
+        ], JSON_UNESCAPED_UNICODE));
+    }
+}

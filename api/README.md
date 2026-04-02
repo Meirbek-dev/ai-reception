@@ -138,7 +138,7 @@ Copy `.env.example` to `.env` (done automatically by `composer setup`) and adjus
 | `RATE_LIMIT_PER_MINUTE` | `30` | Upload rate limit per IP |
 | `MAX_FILE_AGE_DAYS` | `30` | Uploaded files older than this are deleted by the cleanup job |
 | `CACHE_TTL_DAYS` | `7` | OCR cache TTL |
-| `TESSERACT_TIMEOUT` | `30` | Tesseract per-image timeout (seconds) |
+| `TESSERACT_TIMEOUT` | `60` | Tesseract per-image timeout (seconds) |
 | `TESSERACT_PSM` | `4` | Tesseract page segmentation mode |
 | `PDF_DPI` | `200` | DPI for PDF→image conversion |
 | `IMAGE_MAX_SIZE` | `1800` | Max image dimension (pixels) before OCR |

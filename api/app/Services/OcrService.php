@@ -152,9 +152,7 @@ class OcrService
         try {
             $manager = new ImageManager(new Driver());
             // Intervention Image v4 uses decodePath(); v3 used read().
-            $img = method_exists($manager, 'read')
-                ? $manager->read($filePath)
-                : $manager->decodePath($filePath);
+            $img = $manager->read($filePath);
 
             $img->greyscale();
 
@@ -177,7 +175,7 @@ class OcrService
     }
 
     // -------------------------------------------------------------------------
-    // Cache helpers  (SHA-256 keyed JSON files, same layout as Python version)
+    // Cache helpers  (SHA-256 keyed JSON files)
     // -------------------------------------------------------------------------
 
     private function cacheKey(string $filePath): string

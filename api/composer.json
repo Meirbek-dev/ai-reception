@@ -1,6 +1,6 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "tou/ai-reception",
     "type": "project",
     "description": "The skeleton application for the Laravel framework.",
     "keywords": [
@@ -44,7 +44,7 @@
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
-            "npx --yes concurrently -c \"#93c5fd,#c4b5fd\" \"php -S 127.0.0.1:5040 -t public\" \"php artisan queue:listen --tries=1\" --names='server,queue'"
+            "npx --yes concurrently -c \"#93c5fd,#c4b5fd\" \"php -d post_max_size=64M -d upload_max_filesize=64M -S 127.0.0.1:5040 -t public\" \"php artisan queue:listen --tries=1\" --names='server,queue'"
         ],
         "test": [
             "@php artisan config:clear --ansi",

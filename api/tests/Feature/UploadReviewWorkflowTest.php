@@ -129,7 +129,7 @@ it('supports uploading a document and completing the review workflow', function 
     expect($document->fresh()->assigned_reviewer_id)->toBe($reviewer->id);
     expect($document->fresh()->resolved_at)->not->toBeNull();
 
-    $this->getJson("/admin/documents/{$document->id}/audit")
+    $this->getJson("/admin/review-queue/{$document->id}/audit")
         ->assertOk()
         ->assertJsonCount(2)
         ->assertJsonPath('0.action', 'claim')

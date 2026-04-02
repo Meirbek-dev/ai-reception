@@ -42,8 +42,4 @@ Route::prefix('admin')
          Route::get('/review-queue/{document}/audit',         [ReviewQueueController::class, 'audit']);
          Route::get('/review-queue/{document}/preview',       [ReviewQueueController::class, 'preview']);
 
-         // Aliases used by the Python backend (/admin/documents/...)
-         Route::get('/documents/{document}',                  [ReviewQueueController::class, 'show']);
-         Route::get('/documents/{document}/audit',            [ReviewQueueController::class, 'audit']);
-         Route::get('/documents/{document}/preview',          [ReviewQueueController::class, 'preview']);
      });

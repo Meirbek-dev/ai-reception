@@ -55,7 +55,7 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg && \
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Copy Laravel application source
-COPY api-php/ /app/
+COPY api/ /app/
 
 # Install PHP dependencies (production, no dev)
 RUN composer install --no-dev --optimize-autoloader --no-interaction
@@ -79,10 +79,10 @@ RUN addgroup -S appuser && adduser -S -G appuser appuser
 RUN chown -R appuser:appuser /app/storage /app/bootstrap/cache /app/database
 
 # Nginx config
-COPY api-php/docker/nginx.conf /etc/nginx/http.d/default.conf
+COPY api/docker/nginx.conf /etc/nginx/http.d/default.conf
 
 # Supervisor config  (runs php-fpm + nginx + scheduler)
-COPY api-php/docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY api/docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Artisan-generated caches (speeds up boot)
 RUN php artisan config:cache && php artisan route:cache && php artisan view:cache

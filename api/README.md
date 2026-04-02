@@ -29,16 +29,19 @@ PHP 4+ / Laravel 13 backend. Replaces the previous FastAPI (Python) implementati
 | poppler-utils | any recent (`pdftoppm` must be in `PATH`) |
 
 Install system dependencies on **Debian/Ubuntu**:
+
 ```bash
 sudo apt install tesseract-ocr tesseract-ocr-rus tesseract-ocr-kaz poppler-utils
 ```
 
 On **macOS** (Homebrew):
+
 ```bash
 brew install tesseract tesseract-lang poppler
 ```
 
 On **Windows** (with [Laravel Herd](https://herd.laravel.com/)):
+
 - Install Tesseract via [UB Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki); add to `PATH`
 - Install poppler via winget: `winget install poppler`
 
@@ -49,7 +52,7 @@ On **Windows** (with [Laravel Herd](https://herd.laravel.com/)):
 ### 1. Install dependencies and set up the app
 
 ```bash
-cd api-php
+cd api
 
 # Install PHP and JS dependencies, generate app key, run migrations, build frontend
 composer setup
@@ -70,7 +73,7 @@ This starts three concurrent processes:
 | `php artisan serve --port=5040` | Laravel dev server | 5040 |
 | `php artisan queue:listen` | Job queue worker | — |
 
-The API is at **http://localhost:5040/api/**
+The API is at **<http://localhost:5040/api/>**
 
 > **Note:** The React frontend in `web/` talks to `http://localhost:5040` for API calls. Make sure that port is free before running `composer dev`.
 
@@ -168,6 +171,7 @@ Roles:
 ## API Reference
 
 All endpoints are under `/api/`. The frontend SPA must:
+
 1. `GET /sanctum/csrf-cookie` to obtain the XSRF token
 2. Send the `X-XSRF-TOKEN` header on every mutating request
 3. Include `withCredentials: true` on all requests
@@ -182,11 +186,13 @@ All endpoints are under `/api/`. The frontend SPA must:
 | GET | `/api/auth/me` | ✓ | Current user + session info |
 
 **Login request:**
+
 ```json
 { "email": "admin@example.com", "password": "...", "remember_me": false }
 ```
 
 **Login response:**
+
 ```json
 {
   "message": "Успешный вход",
@@ -220,6 +226,7 @@ All endpoints are under `/api/`. The frontend SPA must:
 | `files[]` | file(s) | PDF, JPG, PNG — up to 20 files, 50 MB each |
 
 **Upload response:**
+
 ```json
 {
   "success":      [{ "id": "...", "originalName": "...", "category": "Diplom", "confidence": 0.95 }],
@@ -248,6 +255,7 @@ All endpoints require authentication + `role:reviewer,admin`.
 | GET | `/api/admin/review-queue/{id}/preview` | Document preview (PDF inline / image base64) |
 
 **Resolve request:**
+
 ```json
 {
   "final_category":     "Diplom",
@@ -342,6 +350,7 @@ MAX_FILE_AGE_DAYS=90
 ```
 
 Cache config/routes after any `.env` or code change:
+
 ```bash
 php artisan config:cache && php artisan route:cache && php artisan view:cache
 ```
@@ -351,7 +360,7 @@ php artisan config:cache && php artisan route:cache && php artisan view:cache
 ## Architecture
 
 ```
-api-php/
+api/
 ├── app/
 │   ├── Console/Commands/
 │   │   ├── CleanupOldFiles.php          # Hourly: delete old uploads + expired OCR cache

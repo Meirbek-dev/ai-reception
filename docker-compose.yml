@@ -22,7 +22,7 @@ services:
       - SESSION_DRIVER=cookie
       - SESSION_ENCRYPT=true
     env_file:
-      - api-php/.env
+      - api/.env
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:5040/api/health || exit 1"]
       interval: 30s

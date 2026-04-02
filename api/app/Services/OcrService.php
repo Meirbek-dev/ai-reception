@@ -132,15 +132,85 @@ class OcrService
      */
     private function ocrImageFile(string $imagePath): string
     {
+        $primaryText = $this->runTesseract($imagePath, $this->tesseractPsm);
+
+        if (! $this->shouldTryFallbackPasses($primaryText)) {
+            return $primaryText;
+        }
+
+        $candidates = [$primaryText];
+        foreach ([6, 11] as $psm) {
+            if ($psm === $this->tesseractPsm) {
+                continue;
+            }
+
+            $candidates[] = $this->runTesseract($imagePath, $psm);
+        }
+
+        return $this->selectBestOcrCandidate($candidates);
+    }
+
+    private function runTesseract(string $imagePath, int $psm): string
+    {
         try {
             return (new TesseractOCR($imagePath))
                 ->lang('rus', 'eng')
-                ->psm($this->tesseractPsm)
-                ->run();
+                ->psm($psm)
+                ->run($this->tesseractTimeout);
         } catch (\Throwable $e) {
-            Log::warning("Tesseract failed for {$imagePath}: {$e->getMessage()}");
+            Log::warning("Tesseract failed for {$imagePath} with psm={$psm}: {$e->getMessage()}");
             return '';
         }
+    }
+
+    private function shouldTryFallbackPasses(string $text): bool
+    {
+        $trimmed = trim($text);
+
+        return $trimmed === ''
+            || mb_strlen($trimmed) < 80
+            || $this->ocrTextQualityScore($trimmed) < 45.0;
+    }
+
+    private function selectBestOcrCandidate(array $candidates): string
+    {
+        $bestText = '';
+        $bestScore = -1.0;
+
+        foreach ($candidates as $candidate) {
+            $score = $this->ocrTextQualityScore($candidate);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestText = $candidate;
+            }
+        }
+
+        return $bestText;
+    }
+
+    private function ocrTextQualityScore(string $text): float
+    {
+        $trimmed = trim($text);
+        if ($trimmed === '') {
+            return 0.0;
+        }
+
+        preg_match_all('/\p{L}/u', $trimmed, $letters);
+        preg_match_all('/\p{N}/u', $trimmed, $digits);
+        preg_match_all('/\b[\p{L}\p{N}]{4,}\b/u', $trimmed, $longWords);
+        preg_match_all('/[^\p{L}\p{N}\s]/u', $trimmed, $noise);
+
+        $letterCount = count($letters[0]);
+        $digitCount = count($digits[0]);
+        $longWordCount = count($longWords[0]);
+        $noiseCount = count($noise[0]);
+        $length = mb_strlen($trimmed);
+
+        return ($letterCount * 0.6)
+            + ($digitCount * 0.15)
+            + ($longWordCount * 4.0)
+            + min($length, 800) * 0.05
+            - ($noiseCount * 1.5);
     }
 
     /**
@@ -151,10 +221,12 @@ class OcrService
     {
         try {
             $manager = new ImageManager(new Driver());
-            // Intervention Image v4 uses decodePath(); v3 used read().
-            $img = $manager->read($filePath);
+            $img = $manager->decodePath($filePath);
 
-            $img->greyscale();
+            $img->grayscale();
+            $img->contrast(20);
+            $img->brightness(5);
+            $img->sharpen(15);
 
             $w = $img->width();
             $h = $img->height();

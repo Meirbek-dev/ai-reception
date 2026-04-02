@@ -2,7 +2,6 @@ services:
   ai-reception:
     build:
       context: .
-      dockerfile: ./Dockerfile.php
     container_name: ai-reception
     restart: unless-stopped
     ports:

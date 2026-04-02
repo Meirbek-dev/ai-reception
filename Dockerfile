@@ -1,86 +1,98 @@
-# Production multi-stage Dockerfile
-# 1) frontend-builder: build the web app with pnpm
-# 2) python-builder: create a venv and install runtime python deps
-# 3) runtime: copy venv and built frontend, install runtime OS packages and run uvicorn
+# Production multi-stage Dockerfile for PHP + Laravel
+# 1) frontend-builder: build the React web app with pnpm
+# 2) runtime: PHP 8.4 + Composer + OS packages + Laravel
 
-# --- Frontend builder -----------------------------------------------------
+# --- Frontend builder -------------------------------------------------------
 FROM node:25-slim AS frontend-builder
 WORKDIR /workspace
 
-# Install pnpm
 RUN npm i -g pnpm@latest || true
 
-# Copy only web sources for build
 COPY web/package.json web/pnpm-lock.yaml* ./web/
 COPY web/ ./web/
 
-# Build the frontend (Vite -> dist)
 WORKDIR /workspace/web
 RUN CI=true pnpm install --frozen-lockfile && \
     CI=true pnpm run build
 
-# --- Python builder -------------------------------------------------------
-FROM python:3.14-slim AS python-builder
+# --- PHP runtime image -------------------------------------------------------
+FROM php:8.4-fpm-alpine AS runtime
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1
 
-# Install build-time OS deps for some Python packages (poppler/tesseract related)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-dev \
-    pkg-config \
-    libpoppler-cpp-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Install OS packages
+RUN apk add --no-cache \
+    # PDF -> image conversion (pdftoppm)
+    poppler-utils \
+    # OCR engine
+    tesseract-ocr \
+    tesseract-ocr-data-rus \
+    # Nginx + Supervisor to run both php-fpm and nginx in one container
+    nginx \
+    supervisor \
+    # PHP extensions
+    libpng-dev \
+    libjpeg-turbo-dev \
+    freetype-dev \
+    icu-dev \
+    zip \
+    libzip-dev \
+    sqlite \
+    sqlite-dev \
+    curl
 
-# Create venv
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Build PHP extensions
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg && \
+    docker-php-ext-install -j$(nproc) \
+        gd \
+        pdo_sqlite \
+        zip \
+        intl \
+        pcntl \
+        opcache
 
-# Copy requirements file and install runtime Python dependencies into venv
-COPY api/requirements.txt ./requirements.txt
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy application source
+# Copy Laravel application source
 COPY api/ /app/
 
-# --- Final runtime image --------------------------------------------------
-FROM python:3.14-slim
-WORKDIR /app
-ENV PYTHONUNBUFFERED=1
+# Install PHP dependencies (production, no dev)
+RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Install runtime OS packages required by pdf2image/tesseract conversions
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    poppler-utils \
-    tesseract-ocr \
-    tesseract-ocr-rus \
-    libtesseract-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Copy built frontend into Laravel's public/build for serving
+COPY --from=frontend-builder /workspace/web/dist /app/public/build
 
-# Ensure tesseract can find tessdata
-ENV TESSDATA_PREFIX=/usr/share/tessdata
+# Storage directories (will be replaced by volume mounts in production)
+RUN mkdir -p \
+    /app/storage/app/uploads \
+    /app/storage/app/cache \
+    /app/storage/logs \
+    /app/storage/framework/sessions \
+    /app/storage/framework/views \
+    /app/storage/framework/cache \
+    /app/bootstrap/cache \
+    /app/database
 
 # Create non-root user
-RUN useradd --create-home --shell /bin/false appuser || true
+RUN addgroup -S appuser && adduser -S -G appuser appuser
 
-# Copy venv from python-builder
-COPY --from=python-builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Give appuser write access to nginx runtime paths
+RUN mkdir -p /var/lib/nginx/logs /run/nginx /var/log/nginx && \
+    chown -R appuser:appuser /var/lib/nginx /run/nginx /var/log/nginx
 
-# Copy app source (server) and other files
-COPY --from=python-builder /app /app
+RUN chown -R appuser:appuser /app/storage /app/bootstrap/cache /app/database
 
-# Copy built frontend into place to be served by the Python app
-COPY --from=frontend-builder /workspace/web/dist /app/build/web
+# Nginx config
+COPY api/docker/nginx.conf /etc/nginx/http.d/default.conf
 
-# Ensure uploads and data directories exist and are writable
-RUN mkdir -p /app/uploads /app/data && chown -R appuser:appuser /app/uploads /app/data /app
+# Supervisor config  (runs php-fpm + nginx + scheduler)
+COPY api/docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Artisan-generated caches (speeds up boot)
+RUN php artisan config:cache && php artisan route:cache
 
 USER appuser
 
 EXPOSE 5040
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5040", "--workers", "8"]
-
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
